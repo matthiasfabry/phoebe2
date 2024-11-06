@@ -426,8 +426,8 @@ null
 "description": "Source for bolometric limb darkening coefficients (used only for irradiation; 'auto' to interpolate from the applicable table according to the 'atm' parameter, or the name of a specific atmosphere table)",
 "choices": [
 "auto",
-"phoenix",
-"ck2004"
+"ck2004",
+"phoenix"
 ],
 "value": "auto",
 "visible_if": "ld_mode_bol:lookup",
@@ -774,8 +774,8 @@ null
 "description": "Source for bolometric limb darkening coefficients (used only for irradiation; 'auto' to interpolate from the applicable table according to the 'atm' parameter, or the name of a specific atmosphere table)",
 "choices": [
 "auto",
-"phoenix",
-"ck2004"
+"ck2004",
+"phoenix"
 ],
 "value": "auto",
 "visible_if": "ld_mode_bol:lookup",
@@ -1126,12 +1126,55 @@ null
 "Class": "FloatParameter"
 },
 {
+"qualifier": "mixing_enabled",
+"component": "contact_envelope",
+"kind": "envelope",
+"context": "component",
+"description": "Whether to smooth the envelope temperature distribution across the neck",
+"value": true,
+"copy_for": false,
+"latexfmt": "\\mathrm{{wenabled}}_\\mathrm{{ {component} }}",
+"Class": "BoolParameter"
+},
+{
+"qualifier": "mixing_power",
+"component": "contact_envelope",
+"kind": "envelope",
+"context": "component",
+"description": "Power of the thermal mixing of the envelope",
+"value": 0.5,
+"default_unit": "",
+"limits": [
+null,
+null
+],
+"copy_for": false,
+"latexfmt": "\\mathrm{{w}}_\\mathrm{{ {component} }}",
+"Class": "FloatParameter"
+},
+{
+"qualifier": "mixing_method",
+"component": "contact_envelope",
+"kind": "envelope",
+"context": "component",
+"description": "Method for thermal mixing of the envelope",
+"choices": [
+"lateral",
+"isotropic",
+"spotty"
+],
+"value": "lateral",
+"copy_for": false,
+"latexfmt": "\\mathrm{{smethod}}_\\mathrm{{ {component} }}",
+"Class": "ChoiceParameter"
+},
+{
 "qualifier": "fillout_factor",
 "component": "contact_envelope",
 "kind": "envelope",
 "context": "component",
 "description": "Fillout-factor of the envelope",
-"value": 0.6417897080770951,
+"value": 0.6417897080770943,
 "default_unit": "",
 "limits": [
 0.0,
@@ -1147,7 +1190,7 @@ null
 "kind": "envelope",
 "context": "component",
 "description": "Potential of the envelope (from the primary component's reference)",
-"value": 3.4013774072298766,
+"value": 3.401377407229877,
 "default_unit": "",
 "limits": [
 0.0,
@@ -2277,10 +2320,10 @@ null
 "description": "Atmosphere table",
 "choices": [
 "extern_atmx",
+"ck2004",
 "extern_planckint",
-"blackbody",
 "phoenix",
-"ck2004"
+"blackbody"
 ],
 "value": "ck2004",
 "copy_for": {
@@ -2513,10 +2556,10 @@ null
 "description": "Atmosphere table",
 "choices": [
 "extern_atmx",
+"ck2004",
 "extern_planckint",
-"blackbody",
 "phoenix",
-"ck2004"
+"blackbody"
 ],
 "value": "ck2004",
 "copy_for": false,
@@ -2531,10 +2574,10 @@ null
 "description": "Atmosphere table",
 "choices": [
 "extern_atmx",
+"ck2004",
 "extern_planckint",
-"blackbody",
 "phoenix",
-"ck2004"
+"blackbody"
 ],
 "value": "ck2004",
 "copy_for": false,
@@ -2740,7 +2783,7 @@ null
 "qualifier": "phoebe_version",
 "context": "setting",
 "description": "Version of PHOEBE",
-"value": "2.4.10",
+"value": "2.4.14.dev+release-2.5",
 "copy_for": false,
 "readonly": true,
 "advanced": true,
