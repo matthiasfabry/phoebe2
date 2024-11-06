@@ -298,7 +298,7 @@ def envelope(component, **kwargs):
     # params += [FloatParameter(qualifier='frac_lost_bol', value=kwargs.get('frac_lost_bol', 1.0), default_unit=u.dimensionless_unscaled, limits=(0.0, 1.0), description='ratio of incident bolometric light that is lost/ignored')]
 
 
-    params += [BoolParameter(qualifier='mixing_enabled', latexfmt=r'\mathrm{{wenabled}}_\mathrm{{ {component} }}', value=kwargs.get('mixing_enabled', True), description='Whether to smooth the envelope temperature distribution across the neck')]
+    params += [BoolParameter(qualifier='mixing_enabled', latexfmt=r'\mathrm{{wenabled}}_\mathrm{{ {component} }}', value=kwargs.get('mixing_enabled', False), description='Whether to smooth the envelope temperature distribution across the neck')]
     params += [FloatParameter(qualifier='mixing_power', latexfmt=r'\mathrm{{w}}_\mathrm{{ {component} }}', value=kwargs.get('mixing_power', 0.5), default_unit=u.dimensionless_unscaled, limits=(None,None), description='Power of the thermal mixing of the envelope')]
     params += [ChoiceParameter(qualifier='mixing_method', latexfmt=r'\mathrm{{smethod}}_\mathrm{{ {component} }}', value=kwargs.get('mixing_method', 'lateral'), choices=['lateral', 'isotropic', 'spotty'], description='Method for thermal mixing of the envelope')]
     params += [FloatParameter(qualifier='fillout_factor', latexfmt=r'\mathrm{{FF}}_\mathrm{{ {component} }}', value=kwargs.get('fillout_factor', 0.5), default_unit=u.dimensionless_unscaled, limits=(0.0,1.0), description='Fillout-factor of the envelope')]
