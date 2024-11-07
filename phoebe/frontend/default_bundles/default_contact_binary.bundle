@@ -426,8 +426,8 @@ null
 "description": "Source for bolometric limb darkening coefficients (used only for irradiation; 'auto' to interpolate from the applicable table according to the 'atm' parameter, or the name of a specific atmosphere table)",
 "choices": [
 "auto",
-"ck2004",
-"phoenix"
+"phoenix",
+"ck2004"
 ],
 "value": "auto",
 "visible_if": "ld_mode_bol:lookup",
@@ -774,8 +774,8 @@ null
 "description": "Source for bolometric limb darkening coefficients (used only for irradiation; 'auto' to interpolate from the applicable table according to the 'atm' parameter, or the name of a specific atmosphere table)",
 "choices": [
 "auto",
-"ck2004",
-"phoenix"
+"phoenix",
+"ck2004"
 ],
 "value": "auto",
 "visible_if": "ld_mode_bol:lookup",
@@ -1130,8 +1130,8 @@ null
 "component": "contact_envelope",
 "kind": "envelope",
 "context": "component",
-"description": "Whether to smooth the envelope temperature distribution across the neck",
-"value": true,
+"description": "Whether to apply thermal mixing of the contact envelope",
+"value": false,
 "copy_for": false,
 "latexfmt": "\\mathrm{{wenabled}}_\\mathrm{{ {component} }}",
 "Class": "BoolParameter"
@@ -1161,7 +1161,8 @@ null
 "choices": [
 "lateral",
 "isotropic",
-"spotty"
+"spotty",
+"perfect"
 ],
 "value": "lateral",
 "copy_for": false,
@@ -2320,9 +2321,9 @@ null
 "description": "Atmosphere table",
 "choices": [
 "extern_atmx",
-"ck2004",
-"extern_planckint",
 "phoenix",
+"extern_planckint",
+"ck2004",
 "blackbody"
 ],
 "value": "ck2004",
@@ -2556,9 +2557,9 @@ null
 "description": "Atmosphere table",
 "choices": [
 "extern_atmx",
-"ck2004",
-"extern_planckint",
 "phoenix",
+"extern_planckint",
+"ck2004",
 "blackbody"
 ],
 "value": "ck2004",
@@ -2574,9 +2575,9 @@ null
 "description": "Atmosphere table",
 "choices": [
 "extern_atmx",
-"ck2004",
-"extern_planckint",
 "phoenix",
+"extern_planckint",
+"ck2004",
 "blackbody"
 ],
 "value": "ck2004",
