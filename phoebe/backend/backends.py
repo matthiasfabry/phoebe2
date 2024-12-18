@@ -1006,9 +1006,9 @@ class PhoebeBackend(BaseBackendByTime):
         coords2 = secondary_mesh.roche_coords_for_computations
         teffs2 = secondary_mesh.teffs
 
-        new_teffs1, new_teffs2 = contacts_smoothing.smooth_teffs(np.array(coords1), np.array(teffs1), np.array(coords2),
-                                                                 np.array(teffs2), mixing_method=mixing_method,
-                                                                 mixing_power=mixing_power, teff_ratio=teff_ratio)
+        new_teffs1, new_teffs2 = contacts_smoothing.mix_teffs(np.array(coords1), np.array(teffs1), np.array(coords2),
+                                                              np.array(teffs2), mixing_method=mixing_method,
+                                                              mixing_power=mixing_power, teff_ratio=teff_ratio)
         # w=smoothing_factor, cutoff=0.)
         primary_mesh.update_columns(teffs=new_teffs1)
         secondary_mesh.update_columns(teffs=new_teffs2)
