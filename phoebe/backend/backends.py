@@ -925,7 +925,7 @@ class PhoebeBackend(BaseBackendByTime):
         starrefs  = hier.get_stars()
         meshablerefs = hier.get_meshables()
 
-        if len(starrefs)==1 and computeparams.get_value(qualifier='distortion_method', component=starrefs[0], **kwargs) in ['roche', 'none']:
+        if len(starrefs)==1 and computeparams.get_value(qualifier='distortion_method', component=starrefs[0], **kwargs) in ['roche', 'point-mass']:
             raise ValueError("distortion_method='{}' not valid for single star".format(computeparams.get_value(qualifier='distortion_method', component=starrefs[0], **kwargs)))
 
     def _compute_intrinsic_system_at_t0(self, b, compute,

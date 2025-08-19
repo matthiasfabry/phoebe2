@@ -90,6 +90,11 @@ def phoebe(**kwargs):
     * `distortion_method` (string, optional, default='roche'): what type of
         distortion to use when meshing the surface (only applicable
         if `mesh_method` is 'marching').
+        Choices are:
+        -   'roche': Distorted mesh according to the (binary) Roche Potential
+        -   'rotstar': Distorted mesh according to stellar rotation only. This is sometimes called the single-star Roche Potential
+        -   'sphere': Non-distorted, spherical mesh.
+        -   'point-mass': No mesh is computed, useful for modeling compact objects that do not eclipse.
     * `eclipse_method` (string, optional, default='native'): which method to use
         for determinging eclipses.
     * `lc_method` (string, optional, default='numerical'): which method to use
@@ -153,7 +158,8 @@ def phoebe(**kwargs):
     # any new envelopes in which copy_for triggers a new ntriangles parameter
     # will still get 1500 as a default)
     params += [IntParameter(visible_if='mesh_method:marching,hierarchy.is_meshable:true', copy_for={'kind': ['star', 'envelope'], 'component': '*'}, component='_default', qualifier='ntriangles', value=kwargs.get('ntriangles', 1500), limits=(100,None), default_unit=u.dimensionless_unscaled, description='Requested number of triangles (won\'t be exact).')]
-    params += [ChoiceParameter(visible_if='mesh_method:marching,hierarchy.is_meshable:true', copy_for={'kind': ['star'], 'component': '*'}, component='_default', qualifier='distortion_method', value=kwargs.get('distortion_method', 'roche'), choices=['roche', 'rotstar', 'sphere', 'none'], description='Method to use for distorting stars')]
+    # Mesh type
+    params += [ChoiceParameter(visible_if='mesh_method:marching,hierarchy.is_meshable:true', copy_for={'kind': ['star'], 'component': '*'}, component='_default', qualifier='distortion_method', value=kwargs.get('distortion_method', 'roche'), choices=['roche', 'rotstar', 'sphere', 'point-mass'], description='Method to use for determining the shape of the mesh representing the star')]
 
     if conf.devel:
         # TODO: can we have this computed from ntriangles? - and then do the same for the legacy compute options?
