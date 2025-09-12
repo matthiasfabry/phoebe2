@@ -144,6 +144,16 @@ struct Tsphere {
 
   }
 
+  void hessian(T r[3], T ret[3][3], [[maybe_unused]] const bool & precision = false){
+
+    for (int i = 0; i < 3; i++)
+      for (int j = 0; j < 3; j++)
+        ret[i][j] = 0;
+
+    ret[0][0] = ret[1][1] = ret[2][2] = 2;
+
+  }
+
   /*
     Initial point
   */
