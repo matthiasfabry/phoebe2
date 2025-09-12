@@ -1535,8 +1535,8 @@ struct Tmarching: public Tbody {
     Tfront_polygon &P,
     typename Tfront_polygon::iterator & start,
     typename Tfront_polygon::iterator & end,
-    const T &delta2 ){
-
+    const T &delta2 )
+    {
     if (P.size() <= 3) return Tbad_pair(0, 0); // safeguard
 
     int s;
@@ -1637,6 +1637,68 @@ struct Tmarching: public Tbody {
 
   ALIAS_TEMPLATE_FUNCTION(check_bad_pairs, check_bad_pairs_new)
 
+// bounding between lo and hi
+inline T clampT(T x, T lo, T hi) { return x < lo ? lo : (x > hi ? hi : x); }
+
+// h = Hessian 3x3
+// n = unit surface normal
+T curvature(T h[3][3], T n[3]) {
+    // Build two tangent vectors orthogonal to n
+    T t1[3], t2[3];
+
+    // pick a vector not parallel to n
+    if (std::fabs(n[0]) < 0.9) {
+        t1[0] = 0; t1[1] = -n[2]; t1[2] = n[1];
+    } else {
+        t1[0] = -n[2]; t1[1] = 0; t1[2] = n[0];
+    }
+
+    // normalize t1
+    T norm = std::sqrt(t1[0]*t1[0] + t1[1]*t1[1] + t1[2]*t1[2]);
+    for (int i=0;i<3;i++) t1[i] /= norm;
+
+    // t2 = n × t1
+    t2[0] = n[1]*t1[2] - n[2]*t1[1];
+    t2[1] = n[2]*t1[0] - n[0]*t1[2];
+    t2[2] = n[0]*t1[1] - n[1]*t1[0];
+
+    // Build 2x2 matrix S in tangent basis
+    T S[2][2];
+    auto quadform = [&](const double v[3], const double w[3]) {
+        double tmp[3];
+        for (int i=0;i<3;i++) {
+            tmp[i] = h[i][0]*w[0] + h[i][1]*w[1] + h[i][2]*w[2];
+        }
+        return v[0]*tmp[0] + v[1]*tmp[1] + v[2]*tmp[2];
+    };
+
+    S[0][0] = quadform(t1,t1);
+    S[0][1] = quadform(t1,t2);
+    S[1][0] = quadform(t2,t1);
+    S[1][1] = quadform(t2,t2);
+
+    T traceS = S[0][0] + S[1][1];
+    T detS = S[0][0]*S[1][1] - S[0][1]*S[1][0];
+
+    // solve l^2 - (tr S)l + det S = 0 for eigenvalues
+    T disc = traceS*traceS - 4 * detS;
+    if (disc < 0) disc = 0;
+    T sqrtD = std::sqrt(disc);
+    T k1 = 0.5 * (traceS + sqrtD);
+    T k2 = 0.5 * (traceS - sqrtD);
+
+//    std::cerr << "ks" << k1 << k2 << std::endl;
+    T out = std::max(std::fabs(k1), std::fabs(k2));
+    if (k1 < 0 || k2 < 0) out = 1.e99;  // if one curvature is negative, we are in the neck region of a contact!
+    return out;
+}
+
+// mapping: kappa to a step size delta
+T map_kappa_to_delta(T delta_base, T kappa, T kappa0, T alpha, T delta_min, T delta_max) {
+    T d = delta_base * (1+alpha*kappa0) / (1+alpha*kappa);
+    return clampT(d, delta_min, delta_max);
+}
+
   /*
     Triangulization using marching method of genus 0 closed and surfaces.
 
@@ -1663,6 +1725,391 @@ struct Tmarching: public Tbody {
      1 - too many triangles
      2 - problem with converges
   */
+int triangulize_full_clever_adaptive(
+    T init_r[3],
+    T init_g[3],
+    const T & delta_in,
+    const unsigned & max_triangles,
+    std::vector <T3Dpoint<T>> & V,
+    std::vector <T3Dpoint<T>> & NatV,
+    std::vector <T3Dpoint<int>> & Tr,
+    std::vector<T> * GatV = 0,
+    const T & init_phi = 0)
+  {
+//    std::cerr << "triangulize_full_clever::adaptive\n";
+
+    // start with normal precision defined by T
+    precision = false;
+
+    // error
+    int error = 0;
+
+    V.clear();
+    Tr.clear();
+
+    const int max_iter = 100;
+
+    // list of front polygons: front is threated as circular list
+    std::vector<Tfront_polygon> lP(1);
+
+    // list of bad pairs
+    //   pair.first = pair.second means there is no bad pair
+    std::vector<Tbad_pair> lB;
+
+    // calculate distance between iterators
+    auto d2 = [&] (auto it0, auto it1) {return dist2(it0->r, it1->r);};
+
+    // choose settings for adaptive step (tune alpha, limits)
+    T alpha = (T) 1.0;              // sensitivity parameter (tune)
+    T delta_min = delta_in * (T)0.25; // don't go below quarter of base
+    T delta_max = delta_in * (T)1.5;  // allow some enlargement in very flat regions
+    T initial_kappa;
+    //
+    // Create initial frontal polygon lP[0] and initial bad point lB[0]
+    // Step 0:
+    //
+
+    {
+      Tvertex v, vk;
+
+      Tfront_polygon & P  = lP.back();
+
+      lB.emplace_back(0,0);   // no bad pair detected
+
+      // construct the vector base
+      create_internal_vertex(init_r, init_g, v, init_phi);
+
+      // add vertex to the set, index 0
+      V.emplace_back(v.r);                  // saving only r
+      if (GatV) GatV->emplace_back(v.norm); // saving g
+      NatV.emplace_back(v.b[2]);            // saving only normal
+
+      // initial curvature
+      T h[3][3];
+      this->hessian(init_r, h);
+      initial_kappa = max_curvature(h, v.b[2]);
+//      std::cerr << "initial_kappa" << initial_kappa << std::endl;
+
+      T sa[6], ca[6], qk[3], u[3];
+
+      utils::sincos_array(5, utils::m_pi3, sa, ca, delta_in);
+
+      for (int k = 0; k < 6 && error == 0; ++k){
+
+        for (int i = 0; i < 3; ++i)
+          qk[i] = v.r[i] + (u[i] = ca[k]*v.b[0][i] + sa[k]*v.b[1][i]);
+
+        if (
+            !slide_over_potential(v.r, v.b[2], u, delta_in, vk, max_iter) &&
+            !project_onto_potential(qk, vk, max_iter, v.b[2])
+           ) {
+          std::cerr << "Warning: Projection did not converge for initial frontal polygon!\n";
+          error = 2;
+        }
+
+        // store points into initial front
+        vk.index = k + 1;  // = V.size();
+        vk.omega_changed = true;
+        P.push_back(vk);
+
+        V.emplace_back(vk.r);                     // saving only r
+        if (GatV) GatV->emplace_back(vk.norm);    // saving norm
+        NatV.emplace_back(vk.b[2]);               // saving only normal
+      }
+
+      //
+      // Creating initial hexagon -- triangle faces in Tr
+      //
+      for (int k = 0; k < 5; ++k) Tr.emplace_back(0, k + 1, k + 2);
+      Tr.emplace_back(0, 6, 1);
+    }
+
+    //
+    //  Triangulization of genus 0 surfaces
+    //
+
+    T delta_in2 = 0.5*delta_in*delta_in;
+    T delta_local = delta_in;
+    T delta_local2 = delta_in2;
+
+    do {
+
+      // current front polygon
+      Tfront_polygon & P  = lP.back();
+      Tbad_pair & B = lB.back();
+
+      do {
+
+        //
+        // Processing the last three vertices
+        //
+        if (P.size() == 3) {
+          Tr.emplace_back(P[0].index, P[1].index, P[2].index);
+
+          // erasing discussed front
+          lP.pop_back();
+
+          // erase discussed possible bad pair
+          lB.pop_back();
+
+          break;
+        }
+
+        // pointers associated to the front
+        auto it_begin = P.begin(), it_end = P.end(), it_last = it_end - 1;
+
+        //
+        // If a non-neighboring vertices are too close form new fronts
+        // Step 2
+        //
+        {
+          // if bad pair is set do the cut of the front
+          if (B.first != B.second) {
+
+            // separate fronts P -> P1, P2
+            auto
+              it0 = it_begin + B.first,
+              it1 = it_begin + B.second;
+
+            it0->omega_changed = true;
+            it1->omega_changed = true;
+
+            // split front into two parts with common two points it0 and it1
+            auto P1 = ccopy<Tfront_polygon>(it0, it1, it_begin, it_last);
+            auto P2 = ccopy<Tfront_polygon>(it1, it0, it_begin, it_last);
+
+            // updating referenced P and B
+            P = P1;
+            B = check_bad_pairs(P, delta_local2);
+
+            // add polygonal front and bad_pair to the list
+            lP.push_back(P2);
+            lB.push_back(check_bad_pairs(P2, delta_local2));
+
+            //std::cerr << "sizes:" <<  P1.size() << '\t' << P2.size() << '\n';
+
+            break;
+          }
+        }
+
+        //
+        // Calculate the front angles and choose the point with the smallest
+        // Step 1
+        //
+
+        T omega_min = utils::m_2pi;
+
+        typename Tfront_polygon::iterator it_min;
+
+        {
+
+          T omega, t, tt, c, s, st, ct;
+
+          // set it_prev, it, it_next: as circular list
+          auto
+            it = it_begin,
+            it_next = it + 1,  // = cnext(it, it_begin, it_last)
+            it_prev = it_last; // = cprev(it, it_begin, it_last)
+
+          while (1) {
+
+            if (it -> omega_changed) { // calculate frontal angle if need
+
+              c = s = ct = st = 0;
+              for (int i = 0; i < 3; ++i) {
+                t  = it_prev->r[i] - it->r[i];  // = dr1[i], dr1 = p_prev - p_cur
+                c += t*it->b[0][i];             // = dr1[i]*t1[i]
+                s += t*it->b[1][i];             // = dr1[i]*t2[i]
+
+                tt  = it_next->r[i] - it->r[i];  // = dr2[i], dr2 = p_next - p_cur
+                ct += tt*it->b[0][i];            // = dr2[i]*t1[i]
+                st += tt*it->b[1][i];            // = dr2[i]*t2[i]
+              }
+
+              // = arg[ dr1.dr2 + I k.(dr1 x dr2) ]
+              // omega = atan2(st,ct) - atan2(s,c);
+              omega = std::atan2(c*st - s*ct, c*ct + s*st);
+
+              // omega = omega mod 2 Pi (offset 0)
+              if (omega < 0) omega += utils::m_2pi;
+
+              it -> omega = omega;
+              it -> omega_changed = false;
+
+            } else  omega = it -> omega;
+
+            // saving the minimal value of omega
+            if (omega < omega_min) {
+              it_min = it;
+              omega_min = omega;
+            }
+
+            // cyclic permutation of pointers
+            it_prev = it;
+            it = it_next;
+
+            if (it_next == it_begin) break;
+
+            //it_next = cnext(it_next, it_begin, it_last);
+            if (it_next == it_last)
+              it_next = it_begin;
+            else
+              ++it_next;
+          }
+        }
+
+        //
+        // Discuss the point with the minimal angle
+        // Step 3
+        //
+
+        {
+          // prepare pointers to vertices in P
+          auto
+            it_prev = it_min,
+            it_next = it_min;
+
+          if (it_min != it_begin) --it_prev; else it_prev = it_last;
+          if (it_min != it_last) ++it_next; else it_next = it_begin;
+
+          // number of triangles to be generated
+          int nt = int(omega_min/utils::m_pi3) + 1;
+
+          T domega = omega_min/nt;
+
+          // correct domega for extreme cases
+          if (domega < 0.8 && nt > 1) {
+            domega = omega_min/(--nt);
+          } else if (nt == 1 && domega > 0.8 &&
+                     d2(it_next, it_prev) > 1.4*delta_local2) {
+            domega = omega_min/(++nt);
+          } else if (omega_min < 3 &&
+                      (d2(it_min, it_prev) < 0.25*delta_local2 ||
+                       d2(it_min, it_next) < 0.25*delta_local2) )  {
+            nt = 1;
+          }
+
+          it_prev->omega_changed = true;
+          it_next->omega_changed = true;
+
+          if (nt > 1) {
+
+            // projection of dr = p_next - p_min to tangent space
+            //  c = dr.t1
+            //  s = dr.t2
+
+            T c = 0, s = 0, t;
+
+            for (int i = 0; i < 3; ++i){
+              t = it_prev->r[i] - it_min->r[i];   // = dr[i]
+              c += t*it_min->b[0][i];             // = dr[i]*t1[i]
+              s += t*it_min->b[1][i];             // = dr[i]*t2[i]
+            }
+
+            // returning fac*(sin(k domega), cos(k domega))
+            // where fac = delta/|(c, s)|
+
+            T sa[6], ca[6], u[3], h[3][3];
+
+            // curvature estimate
+            this->hessian(it_prev->r, h);
+            T kappa = max_curvature(h, it_prev->b[2]);
+
+            delta_local = map_kappa_to_delta(delta_in, kappa, initial_kappa, alpha, delta_min, delta_max);
+            std::cerr << kappa << delta_local << std::endl;
+            delta_local2 = (T)0.5 * delta_local * delta_local;
+
+            utils::sincos_array(nt - 1, domega, sa, ca, delta_local/std::hypot(c, s));
+
+            int n = V.size();             // size of the set of vertices
+
+            T st, ct, qk[3];
+
+            Tvertex Pi[6], *vp = Pi;      // new front from it_min
+
+            for (int k = 1; k < nt && error == 0; ++k, ++n, ++vp){
+
+              // rotate in tangent plane
+              ct = c*ca[k] - s*sa[k];
+              st = c*sa[k] + s*ca[k];
+
+              // forming point on tangent plane
+              for (int i = 0; i < 3; ++i)
+                qk[i] = it_min->r[i] + (u[i] = it_min->b[0][i]*ct + it_min->b[1][i]*st);
+
+              if (!project_onto_potential(qk, *vp, max_iter, it_min->b[2]) &&
+                  !slide_over_potential(it_min->r, it_min->b[2], u, delta_local, *vp, max_iter)) {
+
+                T g[4];
+
+                std::cerr << "Warning: Projection did not converge\n";
+
+                this->grad(qk, g);
+
+                std::cerr.precision(16);
+
+                std::cerr
+                  << "Start\n"
+                  << qk[0] << ' ' << qk[1] << ' ' << qk[2] << '\n'
+                  << g[0]  << ' ' << g[1]  << ' ' << g[2]  << '\n'
+                  << g[3]  << '\n';
+
+
+                this->grad(vp->r, g);
+
+                std::cerr
+                  << "End\n"
+                  << vp->r[0] << ' ' << vp->r[1] << ' ' << vp->r[2] << '\n'
+                  << g[0] << ' ' << g[1] << ' ' << g[2] << '\n'
+                  << g[3] << '\n';
+
+                error = 2;
+              }
+
+              vp->index = n; // = V.size();
+              vp->omega_changed = true;
+
+              // V.emplace_back(vp->r, vp->b[2]);
+              V.emplace_back(vp->r);                    // saving only r
+              if (GatV) GatV->emplace_back(vp->norm);   // saving g
+              NatV.emplace_back(vp->b[2]);              // saving only normal
+
+              // add triangle
+              Tr.emplace_back((k == 1 ? it_prev->index : n - 1), n, it_min->index);
+            }
+
+            // Note: n = V.size();
+
+            // add triangle
+            Tr.emplace_back(n - 1, it_next->index, it_min->index);
+
+            // add vertices to front and replace minimal
+            *(it_min++) = *Pi;
+
+            auto it0 = P.insert(it_min, Pi + 1, Pi + nt - 1),
+
+            // check if there are any bad pairs
+            it1 = (--it0) + nt - 1;
+
+            B = check_bad_pairs(P, it0, it1, delta_local2);
+
+          } else {
+            // add triangle
+            Tr.emplace_back(it_prev->index, it_next->index, it_min->index);
+
+            // erase vertex from the front
+            P.erase(it_min);
+          }
+        }
+
+        if (Tr.size() >= max_triangles) error = 1;
+
+      } while (error == 0);
+
+    } while (lP.size() > 0 && error == 0);
+
+    return error;
+  }
 
   int triangulize_full_clever_old(
     T init_r[3],
@@ -1675,7 +2122,7 @@ struct Tmarching: public Tbody {
     std::vector<T> * GatV = 0,
     const T & init_phi = 0)
   {
-    
+
     //std::cerr << "triangulize_full_clever::old\n";
 
     // start with normal precision defined by T
@@ -1797,7 +2244,7 @@ struct Tmarching: public Tbody {
 
             it0->omega_changed = true;
             it1->omega_changed = true;
-            
+
             Tfront_polygon P1(it0, it1 + 1);
             P.erase(it0 + 1, it1);
 
@@ -1904,7 +2351,7 @@ struct Tmarching: public Tbody {
                   )  {
             nt = 1;
           }
-          
+
           it_prev->omega_changed = true;
           it_next->omega_changed = true;
 
@@ -2156,18 +2603,18 @@ struct Tmarching: public Tbody {
             it0->omega_changed = true;
             it1->omega_changed = true;
 
-            // split front into two parts with common two points it0 and it1 
+            // split front into two parts with common two points it0 and it1
             auto P1 = ccopy<Tfront_polygon>(it0, it1, it_begin, it_last);
             auto P2 = ccopy<Tfront_polygon>(it1, it0, it_begin, it_last);
-            
+
             // updating referenced P and B
             P = P1;
             B = check_bad_pairs(P, delta2);
-            
+
             // add polygonal front and bad_pair to the list
             lP.push_back(P2);
             lB.push_back(check_bad_pairs(P2, delta2));
-            
+
             //std::cerr << "sizes:" <<  P1.size() << '\t' << P2.size() << '\n';
 
             break;
@@ -2268,7 +2715,7 @@ struct Tmarching: public Tbody {
           } else if (nt == 1 && domega > 0.8 &&
                      d2(it_next, it_prev) > 1.4*delta2) {
             domega = omega_min/(++nt);
-          } else if (omega_min < 3 && 
+          } else if (omega_min < 3 &&
                       (d2(it_min, it_prev) < 0.25*delta2 ||
                        d2(it_min, it_next) < 0.25*delta2) )  {
             nt = 1;
@@ -2388,7 +2835,7 @@ struct Tmarching: public Tbody {
     return error;
   }
 
-  ALIAS_TEMPLATE_FUNCTION(triangulize_full_clever, triangulize_full_clever_new)
+  ALIAS_TEMPLATE_FUNCTION(triangulize_full_clever, triangulize_full_clever_adaptive)
 
   /*
     Calculate the central_points of triangles i.e. barycenters
