@@ -66,7 +66,8 @@ struct Tmarching: public Tbody {
       omega,     // frontal angle
       r[3],      // point on the surface
       b[3][3],   // b[0] = t1, b[1] = t2, b[2] = n
-      kappa;     // measure of the curvature at this point
+      delta,     // step to take from this point to advance the mesh
+      k[2];    // principal curvatures at this point
   };
 
   typedef std::vector<Tvertex> Tfront_polygon;
@@ -152,12 +153,6 @@ struct Tmarching: public Tbody {
       std::cerr << '\n';
     }
     #endif
-
-    // curvature
-    T h[3][3];
-    this->hessian(v.r, h);
-    v.kappa = curvature(h, v.b[0], v.b[1], v.b[2], kmin);
-//    std::cerr << "create" << v.kappa << std::endl;
   }
 
   #if defined(DEBUG)
@@ -1641,10 +1636,10 @@ struct Tmarching: public Tbody {
 
 // helpers
 inline T clampT(T x, T lo, T hi) { return x < lo ? lo : (x > hi ? hi : x); }
-
+inline T smooth(T x1, T x2, T alpha) { return x1 * alpha + x2 * (1 - alpha); }
 // h = Hessian 3x3
 // n = unit surface normal
-T curvature(T h[3][3], T t1[3], T t2[3], T n[3], T kmin) {
+void curvature(T h[3][3], T t1[3], T t2[3], T n[3], T *k) {
     // Build 2x2 matrix S in tangent basis
     T S[2][2];
     auto quadform = [&](T v[3], T w[3]) {
@@ -1667,24 +1662,24 @@ T curvature(T h[3][3], T t1[3], T t2[3], T n[3], T kmin) {
     T disc = traceS*traceS - 4 * detS;
     if (disc < 0) disc = 0;
     T sqrtD = std::sqrt(disc);
-    T k1 = 0.5 * (traceS + sqrtD);
-    T k2 = 0.5 * (traceS - sqrtD);
-
-//    std::cerr << "ks" << k1 << k2 << std::endl;
-    T k = std::max(std::fabs(k1), std::fabs(k2));  // maximal curvature
-//    T k = 0.5 * traceS;   // average curvature
-    if (k1 < kmin || k2 < kmin) k = 1.e99;  // if one curvature is negative, we are in the neck region of a contact!
-    return k;
+    k[0] = 0.5 * (traceS + sqrtD);
+    k[1] = 0.5 * (traceS - sqrtD);
 }
 
 // mapping: kappa to a step size delta
-T map_kappa_to_delta(T delta_base, T kappa, T kappa0, T alpha, T delta_min, T delta_max) {
-//    T d1 = delta_base + (delta_max - delta_base) / (-.5 * kappa0) * (kappa - kappa0);
-//    T d2 = delta_min + (delta_max - delta_min) / (.5 * kappa0) * kappa;
-//    T d;
-//    if (kappa > kappa0 / 2) { d = d1; } else { d = d2; };
-    T d = delta_base * (1+alpha*kappa0) / (1+alpha*kappa);
-    return clampT(d, delta_min, delta_max);
+T map_kappa_to_delta(T delta_base, T *k, T *k0, T alpha, T delta_min, T delta_max) {
+//   T kappa0 = 0.5 * (k0[0] + k0[1]);  // average curvature
+   T kappa0 = std::max(k0[0], k0[1]);  // maximal curvature
+   if (k[0] < 0 || k[1] < 0) return delta_min;  // one negative curvature == neck of contact
+//   T kappa = 0.5 * (k[1] + k[0]);
+   T kappa = std::max(std::fabs(k[0]), std::fabs(k[1]));
+   if (kappa > kappa0 / 3) {
+      std::cerr << kappa0 << " " << kappa << std::endl;
+      T d = delta_base * (1+alpha*kappa0) / (1+alpha*kappa);
+      return clampT(d, delta_min, delta_max);
+   }
+   return delta_max * 3*kappa/kappa0;
+
 }
 
   /*
@@ -1748,10 +1743,10 @@ int triangulize_full_clever_adaptive(
     auto d2 = [&] (auto it0, auto it1) { return dist2(it0->r, it1->r); };
 
     // choose settings for adaptive step (tune alpha, limits)
-    T alpha = (T) 1.0;              // sensitivity parameter (tune)
-    T delta_min = delta_in * (T)0.5; // don't go below half of base
-    T delta_max = delta_in * (T)1.5;  // allow some enlargement in very flat regions
-    T initial_kappa, kmin;
+    T alpha_k = 1.0;               // sensitivity parameter
+    T delta_min = delta_in * 0.33;  // don't go below half of base
+    T delta_max = delta_in * 3.0;  // allow some enlargement in very flat regions
+    T initial_k[2], h[3][3];
 
     //
     // Create initial frontal polygon lP[0] and initial bad point lB[0]
@@ -1767,8 +1762,11 @@ int triangulize_full_clever_adaptive(
 
       // construct the vector base
       create_internal_vertex(init_r, init_g, v, init_phi);
-      initial_kappa = v.kappa;
-      kmin = initial_kappa / 4.0;  // minimal kappa below which we consider we are in the neck region
+      this->hessian(v.r, h);
+      curvature(h, v.b[0], v.b[1], v.b[2], v.k);
+      initial_k[0] = v.k[0];
+      initial_k[1] = v.k[1];
+      v.delta = delta_in;
 
       // add vertex to the set, index 0
       V.emplace_back(v.r);                  // saving only r
@@ -1776,7 +1774,7 @@ int triangulize_full_clever_adaptive(
       NatV.emplace_back(v.b[2]);            // saving only normal
 
       // initial curvature
-      std::cerr << "initial_kappa" << v.kappa << std::endl;
+      std::cerr << "initial_ks" << v.k[0] << " " << v.k[1] << std::endl;
 
       T sa[6], ca[6], qk[3], u[3];
       utils::sincos_array(5, utils::m_pi3, sa, ca, delta_in);
@@ -1797,9 +1795,11 @@ int triangulize_full_clever_adaptive(
         // store points into initial front
         vk.index = k + 1;  // = V.size();
         vk.omega_changed = true;
-        T h[3][3];
+
+        // curvature
         this->hessian(vk.r, h);
-        vk.kappa = curvature(h, vk.b[0], vk.b[1], vk.b[2], kmin);
+        curvature(h, vk.b[0], vk.b[1], vk.b[2], vk.k);
+        vk.delta = map_kappa_to_delta(delta_in, vk.k, initial_k, alpha_k, delta_min, delta_max);
         P.push_back(vk);
 
         V.emplace_back(vk.r);                     // saving only r
@@ -1818,9 +1818,10 @@ int triangulize_full_clever_adaptive(
     //  Triangulization of genus 0 surfaces
     //
 
-    T delta_in2 = 0.5*delta_in*delta_in;
+    T delta_in2 = 0.5 * delta_in * delta_in;
     T delta_local = delta_in;
     T delta_local2 = delta_in2;
+    T new_delta;
 
     do {
 
@@ -1997,12 +1998,10 @@ int triangulize_full_clever_adaptive(
 
             T sa[6], ca[6], u[3];
 
-            // curvature estimate
-//            kappa = smooth(kappa_prev, kappa, 0.5);
-
-            delta_local = map_kappa_to_delta(delta_in, it_min->kappa, initial_kappa, alpha, delta_min, delta_max);
-            std::cerr << it_min->kappa << delta_local << std::endl;
-            delta_local2 = (T)0.5 * delta_local * delta_local;
+            // get adapted delta
+            delta_local = it_min->delta;
+            std::cerr << it_min->k[0] << " " << it_min->k[1] << " " << delta_local << std::endl;
+            delta_local2 = 0.5 * delta_local * delta_local;
 
             // returning fac*(sin(k domega), cos(k domega))
             // where fac = delta/|(c, s)|
@@ -2032,7 +2031,6 @@ int triangulize_full_clever_adaptive(
                 this->grad(qk, g);
 
                 std::cerr.precision(16);
-
                 std::cerr
                   << "Start\n"
                   << qk[0] << ' ' << qk[1] << ' ' << qk[2] << '\n'
@@ -2053,10 +2051,14 @@ int triangulize_full_clever_adaptive(
 
               vp->index = n; // = V.size();
               vp->omega_changed = true;
-              T h[3][3];
               this->hessian(vp->r, h);
-              vp->kappa = curvature(h, vp->b[0], vp->b[1], vp->b[2], kmin);
-
+              curvature(h, vp->b[0], vp->b[1], vp->b[2], vp->k);
+              new_delta = map_kappa_to_delta(delta_in, vp->k, initial_k, alpha_k, delta_min, delta_max);
+              if (new_delta > it_min->delta) {
+                 vp->delta = smooth(it_min->delta, new_delta, 0.5);
+              } else {
+                 vp->delta = new_delta;
+              }
               // V.emplace_back(vp->r, vp->b[2]);
               V.emplace_back(vp->r);                    // saving only r
               if (GatV) GatV->emplace_back(vp->norm);   // saving g

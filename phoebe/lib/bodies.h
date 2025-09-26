@@ -313,7 +313,8 @@ struct Tgen_roche {
   */
 
 
-  void grad(T r[3], T ret[4], const bool & precision = false){
+  void grad(T r[3], T ret[4], const bool & precision = false)
+  {
 
    if (precision) {
 
