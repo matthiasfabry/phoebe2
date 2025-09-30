@@ -19,16 +19,32 @@
 #include <list>
 #include <cmath>
 #include <limits>
+#include <type_traits>
 
 #include "utils.h"
 #include "triang_mesh.h"
 #include "cvec.h"
+#include "bodies.h"
+#include "gen_roche.h"
+
+template <typename>
+struct is_Tgen_roche : std::false_type {};
+
+// type check for a Tgen_roche
+template <typename U>
+struct is_Tgen_roche<Tgen_roche<U>> : std::true_type {};
 
 /*
   Triangulation of closed surfaces using marching algorithm.
 */
 template <class T, class Tbody>
 struct Tmarching: public Tbody {
+
+  T *params;
+  // base constructor
+  Tmarching(T *params) : Tbody(params) {
+      this->params = params;
+  }
 
 
   /*
@@ -535,7 +551,6 @@ struct Tmarching: public Tbody {
   }
 
 
-  Tmarching(T *params) : Tbody(params) { }
 
   /*
     Triangulation using marching method of genus 0 closed and surfaces
@@ -946,7 +961,7 @@ struct Tmarching: public Tbody {
     //  Triangulization of genus 0 surfaces
     //
 
-    T delta2 = 0.5*delta*delta;    // TODO: should be more dynamical
+    T delta2 = 0.5*delta*delta;
 
     do {
 
@@ -1424,8 +1439,8 @@ struct Tmarching: public Tbody {
     Tfront_polygon &P,
     typename Tfront_polygon::iterator & start,
     typename Tfront_polygon::iterator & end,
-    const T &delta2 ){
-
+    const T &delta2 )
+    {
     if (P.size() <= 3) return Tbad_pair(0, 0); // safeguard
 
     int s;
@@ -1637,6 +1652,7 @@ struct Tmarching: public Tbody {
 // helpers
 inline T clampT(T x, T lo, T hi) { return x < lo ? lo : (x > hi ? hi : x); }
 inline T smooth(T x1, T x2, T alpha) { return x1 * alpha + x2 * (1 - alpha); }
+
 // h = Hessian 3x3
 // n = unit surface normal
 void curvature(T h[3][3], T t1[3], T t2[3], T n[3], T *k) {
@@ -1670,16 +1686,11 @@ void curvature(T h[3][3], T t1[3], T t2[3], T n[3], T *k) {
 T map_kappa_to_delta(T delta_base, T *k, T *k0, T alpha, T delta_min, T delta_max) {
 //   T kappa0 = 0.5 * (k0[0] + k0[1]);  // average curvature
    T kappa0 = std::max(k0[0], k0[1]);  // maximal curvature
-   if (k[0] < 0 || k[1] < 0) return delta_min;  // one negative curvature == neck of contact
-//   T kappa = 0.5 * (k[1] + k[0]);
+   //   T kappa = 0.5 * (k[1] + k[0]);
    T kappa = std::max(std::fabs(k[0]), std::fabs(k[1]));
-   if (kappa > kappa0 / 3) {
-      std::cerr << kappa0 << " " << kappa << std::endl;
-      T d = delta_base * (1+alpha*kappa0) / (1+alpha*kappa);
-      return clampT(d, delta_min, delta_max);
-   }
-   return delta_max * 3*kappa/kappa0;
-
+//   std::cerr << kappa0 << " " << kappa << std::endl;
+   T d = delta_base * (1+alpha*kappa0) / (1+alpha*kappa);
+   return clampT(d, delta_min, delta_max);
 }
 
   /*
@@ -1822,6 +1833,12 @@ int triangulize_full_clever_adaptive(
     T delta_local = delta_in;
     T delta_local2 = delta_in2;
     T new_delta;
+    T l1pot[3], x_l1[3];
+
+    if (is_Tgen_roche<Tbody>::value) {
+      gen_roche::critical_potential(l1pot, x_l1, 1U, this->params[0]);
+//      std::cerr << l1pot[0] << x_l1[0] << std::endl;
+    }
 
     do {
 
@@ -2000,7 +2017,6 @@ int triangulize_full_clever_adaptive(
 
             // get adapted delta
             delta_local = it_min->delta;
-            std::cerr << it_min->k[0] << " " << it_min->k[1] << " " << delta_local << std::endl;
             delta_local2 = 0.5 * delta_local * delta_local;
 
             // returning fac*(sin(k domega), cos(k domega))
@@ -2051,15 +2067,23 @@ int triangulize_full_clever_adaptive(
 
               vp->index = n; // = V.size();
               vp->omega_changed = true;
+              // compute curvature
               this->hessian(vp->r, h);
               curvature(h, vp->b[0], vp->b[1], vp->b[2], vp->k);
               new_delta = map_kappa_to_delta(delta_in, vp->k, initial_k, alpha_k, delta_min, delta_max);
-              if (new_delta > it_min->delta) {
-                 vp->delta = smooth(it_min->delta, new_delta, 0.5);
-              } else {
-                 vp->delta = new_delta;
+              std::cerr << "delta curv " << new_delta << std::endl;
+//              if (new_delta > it_min->delta) {
+//                 vp->delta = smooth(it_min->delta, new_delta, 0.5);
+//              } else {
+              vp->delta = new_delta;
+//              }
+              // do shrinking also in the neck of a contact binary
+              if (is_Tgen_roche<Tbody>::value && this->params[3] < l1pot[0]) {  // this is a contact binary!
+                new_delta = delta_max - (delta_max - delta_min) * std::exp(-std::pow((vp->r[0] - x_l1[0] - delta_in/2) / 0.2, 2.0));
+                new_delta = clampT(new_delta, delta_min, delta_max);
+                std::cerr << "delta neck " << new_delta << std::endl;
+                if (new_delta < vp->delta) vp->delta = new_delta;
               }
-              // V.emplace_back(vp->r, vp->b[2]);
               V.emplace_back(vp->r);                    // saving only r
               if (GatV) GatV->emplace_back(vp->norm);   // saving g
               NatV.emplace_back(vp->b[2]);              // saving only normal
