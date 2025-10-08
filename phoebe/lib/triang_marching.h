@@ -27,13 +27,6 @@
 #include "bodies.h"
 #include "gen_roche.h"
 
-template <typename>
-struct is_Tgen_roche : std::false_type {};
-
-// type check for a Tgen_roche
-template <typename U>
-struct is_Tgen_roche<Tgen_roche<U>> : std::true_type {};
-
 /*
   Triangulation of closed surfaces using marching algorithm.
 */
@@ -56,7 +49,6 @@ struct Tmarching: public Tbody {
     Return:
       |a-b|_2 -- L2 norm of th difference of vectors
   */
-
   T dist(T *a, T *b){
     // std::hypot(,,) is coming in C++17
     return utils::hypot3(a[0] - b[0], a[1] - b[1], a[2] - b[2]);
@@ -82,8 +74,7 @@ struct Tmarching: public Tbody {
       omega,     // frontal angle
       r[3],      // point on the surface
       b[3][3],   // b[0] = t1, b[1] = t2, b[2] = n
-      delta,     // step to take from this point to advance the mesh
-      k[2];    // principal curvatures at this point
+      delta;     // step to take from this point to advance the mesh
   };
 
   typedef std::vector<Tvertex> Tfront_polygon;
@@ -1649,48 +1640,16 @@ struct Tmarching: public Tbody {
 
   ALIAS_TEMPLATE_FUNCTION(check_bad_pairs, check_bad_pairs_new)
 
-// helpers
-inline T clampT(T x, T lo, T hi) { return x < lo ? lo : (x > hi ? hi : x); }
-inline T smooth(T x1, T x2, T alpha) { return x1 * alpha + x2 * (1 - alpha); }
-
-// h = Hessian 3x3
-// n = unit surface normal
-void curvature(T h[3][3], T t1[3], T t2[3], T n[3], T *k) {
-    // Build 2x2 matrix S in tangent basis
-    T S[2][2];
-    auto quadform = [&](T v[3], T w[3]) {
-        T tmp[3];
-        for (int i=0;i<3;i++) {
-            tmp[i] = h[i][0]*w[0] + h[i][1]*w[1] + h[i][2]*w[2];
-        }
-        return v[0]*tmp[0] + v[1]*tmp[1] + v[2]*tmp[2];
-    };
-
-    S[0][0] = quadform(t1,t1);
-    S[0][1] = quadform(t1,t2);
-    S[1][0] = quadform(t2,t1);
-    S[1][1] = quadform(t2,t2);
-
-    T traceS = S[0][0] + S[1][1];
-    T detS = S[0][0]*S[1][1] - S[0][1]*S[1][0];
-
-    // solve l^2 - (tr S)l + det S = 0 for eigenvalues
-    T disc = traceS*traceS - 4 * detS;
-    if (disc < 0) disc = 0;
-    T sqrtD = std::sqrt(disc);
-    k[0] = 0.5 * (traceS + sqrtD);
-    k[1] = 0.5 * (traceS - sqrtD);
-}
+//inline T clampT(T x, T lo, T hi) { return x < lo ? lo : (x > hi ? hi : x); }
 
 // mapping: kappa to a step size delta
-T map_kappa_to_delta(T delta_base, T *k, T *k0, T alpha, T delta_min, T delta_max) {
-//   T kappa0 = 0.5 * (k0[0] + k0[1]);  // average curvature
-   T kappa0 = std::max(k0[0], k0[1]);  // maximal curvature
-   //   T kappa = 0.5 * (k[1] + k[0]);
-   T kappa = std::max(std::fabs(k[0]), std::fabs(k[1]));
-//   std::cerr << kappa0 << " " << kappa << std::endl;
-   T d = delta_base * (1+alpha*kappa0) / (1+alpha*kappa);
-   return clampT(d, delta_min, delta_max);
+T delta_map(T delta_right, T delta_left, T x, T x0, T alpha, T delta_min) {
+   T corr = std::min(delta_right / 3, delta_left / 3);
+   if (x < x0) {
+      return delta_left - (delta_left - delta_min) * std::exp(-std::pow((x - x0 - corr) / alpha, 2));
+   } else {
+      return delta_right - (delta_right - delta_min) * std::exp(-std::pow((x - x0 - corr) / alpha, 2));
+   }
 }
 
   /*
@@ -1707,6 +1666,7 @@ T map_kappa_to_delta(T delta_base, T *k, T *k0, T alpha, T delta_min, T delta_ma
       delta - size of triangles edges projected to tangent space
       max_triangles - maximal number of triangles used
       init_phi - rotation of the initial hexagon
+      delta_left - size of triangles on the left size of a contact binary, interprets delta == delta_right
 
     Output:
       V - vector of vertices
@@ -1719,7 +1679,7 @@ T map_kappa_to_delta(T delta_base, T *k, T *k0, T alpha, T delta_min, T delta_ma
      1 - too many triangles
      2 - problem with converges
   */
-int triangulize_full_clever_adaptive(
+int triangulize_full_clever_parametric(
     T init_r[3],
     T init_g[3],
     const T & delta_in,
@@ -1728,9 +1688,9 @@ int triangulize_full_clever_adaptive(
     std::vector <T3Dpoint<T>> & NatV,
     std::vector <T3Dpoint<int>> & Tr,
     std::vector<T> * GatV = 0,
-    const T & init_phi = 0)
+    const T & init_phi = 0,
+    const T & delta_left = 0)
   {
-//    std::cerr << "triangulize_full_clever::adaptive\n";
 
     // start with normal precision defined by T
     precision = false;
@@ -1753,39 +1713,33 @@ int triangulize_full_clever_adaptive(
     // calculate distance between iterators
     auto d2 = [&] (auto it0, auto it1) { return dist2(it0->r, it1->r); };
 
-    // choose settings for adaptive step (tune alpha, limits)
-    T alpha_k = 1.0;               // sensitivity parameter
-    T delta_min = delta_in * 0.33;  // don't go below half of base
-    T delta_max = delta_in * 3.0;  // allow some enlargement in very flat regions
-    T initial_k[2], h[3][3];
+    // settings for adaptive step
+    T alpha = 0.1;                  // width of central gaussian for contacts
+    T delta_min = delta_in * 0.33;  // lowest step
+    T l1pot[3], x_l1[3];
+
+    if (delta_left != 0) {  // compute x_l1 in case of contact binary
+      gen_roche::critical_potential(l1pot, x_l1, 1U, this->params[0]);
+//      std::cerr << l1pot[0] << x_l1[0] << std::endl;
+    }
 
     //
     // Create initial frontal polygon lP[0] and initial bad point lB[0]
     // Step 0:
     //
-
     {
       Tvertex v, vk;
-
       Tfront_polygon & P  = lP.back();
-
       lB.emplace_back(0,0);   // no bad pair detected
 
       // construct the vector base
       create_internal_vertex(init_r, init_g, v, init_phi);
-      this->hessian(v.r, h);
-      curvature(h, v.b[0], v.b[1], v.b[2], v.k);
-      initial_k[0] = v.k[0];
-      initial_k[1] = v.k[1];
       v.delta = delta_in;
 
       // add vertex to the set, index 0
       V.emplace_back(v.r);                  // saving only r
       if (GatV) GatV->emplace_back(v.norm); // saving g
       NatV.emplace_back(v.b[2]);            // saving only normal
-
-      // initial curvature
-      std::cerr << "initial_ks" << v.k[0] << " " << v.k[1] << std::endl;
 
       T sa[6], ca[6], qk[3], u[3];
       utils::sincos_array(5, utils::m_pi3, sa, ca, delta_in);
@@ -1807,10 +1761,13 @@ int triangulize_full_clever_adaptive(
         vk.index = k + 1;  // = V.size();
         vk.omega_changed = true;
 
-        // curvature
-        this->hessian(vk.r, h);
-        curvature(h, vk.b[0], vk.b[1], vk.b[2], vk.k);
-        vk.delta = map_kappa_to_delta(delta_in, vk.k, initial_k, alpha_k, delta_min, delta_max);
+        // mapping
+        if (delta_left != 0) {
+          vk.delta = delta_map(delta_in, delta_left, vk.r[0], x_l1[0], alpha, delta_min);
+        } else {
+          vk.delta = delta_in;
+        }
+
         P.push_back(vk);
 
         V.emplace_back(vk.r);                     // saving only r
@@ -1828,26 +1785,16 @@ int triangulize_full_clever_adaptive(
     //
     //  Triangulization of genus 0 surfaces
     //
-
     T delta_in2 = 0.5 * delta_in * delta_in;
     T delta_local = delta_in;
     T delta_local2 = delta_in2;
-    T new_delta;
-    T l1pot[3], x_l1[3];
-
-    if (is_Tgen_roche<Tbody>::value) {
-      gen_roche::critical_potential(l1pot, x_l1, 1U, this->params[0]);
-//      std::cerr << l1pot[0] << x_l1[0] << std::endl;
-    }
 
     do {
-
       // current front polygon
       Tfront_polygon & P  = lP.back();
       Tbad_pair & B = lB.back();
 
       do {
-
         //
         // Processing the last three vertices
         //
@@ -1868,7 +1815,7 @@ int triangulize_full_clever_adaptive(
 
         //
         // If a non-neighboring vertices are too close form new fronts
-        // Step 2
+        // Step 1
         //
         {
           // if bad pair is set do the cut of the front
@@ -1902,15 +1849,11 @@ int triangulize_full_clever_adaptive(
 
         //
         // Calculate the front angles and choose the point with the smallest
-        // Step 1
+        // Step 2
         //
-
         T omega_min = utils::m_2pi;
-
         typename Tfront_polygon::iterator it_min;
-
         {
-
           T omega, t, tt, c, s, st, ct;
 
           // set it_prev, it, it_next: as circular list
@@ -1970,7 +1913,6 @@ int triangulize_full_clever_adaptive(
         // Discuss the point with the minimal angle
         // Step 3
         //
-
         {
           // prepare pointers to vertices in P
           auto
@@ -1982,7 +1924,6 @@ int triangulize_full_clever_adaptive(
 
           // number of triangles to be generated
           int nt = int(omega_min/utils::m_pi3) + 1;
-
           T domega = omega_min/nt;
 
           // correct domega for extreme cases
@@ -2022,7 +1963,6 @@ int triangulize_full_clever_adaptive(
             // returning fac*(sin(k domega), cos(k domega))
             // where fac = delta/|(c, s)|
             utils::sincos_array(nt - 1, domega, sa, ca, delta_local/std::hypot(c, s));
-
             int n = V.size();             // size of the set of vertices
             T st, ct, qk[3];
             Tvertex Pi[6], *vp = Pi;      // new front from it_min
@@ -2068,22 +2008,13 @@ int triangulize_full_clever_adaptive(
               vp->index = n; // = V.size();
               vp->omega_changed = true;
               // compute curvature
-              this->hessian(vp->r, h);
-              curvature(h, vp->b[0], vp->b[1], vp->b[2], vp->k);
-              new_delta = map_kappa_to_delta(delta_in, vp->k, initial_k, alpha_k, delta_min, delta_max);
-              std::cerr << "delta curv " << new_delta << std::endl;
-//              if (new_delta > it_min->delta) {
-//                 vp->delta = smooth(it_min->delta, new_delta, 0.5);
-//              } else {
-              vp->delta = new_delta;
-//              }
-              // do shrinking also in the neck of a contact binary
-              if (is_Tgen_roche<Tbody>::value && this->params[3] < l1pot[0]) {  // this is a contact binary!
-                new_delta = delta_max - (delta_max - delta_min) * std::exp(-std::pow((vp->r[0] - x_l1[0] - delta_in/2) / 0.2, 2.0));
-                new_delta = clampT(new_delta, delta_min, delta_max);
-                std::cerr << "delta neck " << new_delta << std::endl;
-                if (new_delta < vp->delta) vp->delta = new_delta;
+              if (delta_left != 0) {
+                 vp->delta = delta_map(delta_in, delta_left, vp->r[0], x_l1[0], alpha, delta_min);
+                 std::cerr << vp->r[0] << x_l1[0] << vp->delta << std::endl;
+              } else {
+                 vp->delta = delta_in;
               }
+              // do shrinking also in the neck of a contact binary
               V.emplace_back(vp->r);                    // saving only r
               if (GatV) GatV->emplace_back(vp->norm);   // saving g
               NatV.emplace_back(vp->b[2]);              // saving only normal
@@ -2849,7 +2780,7 @@ int triangulize_full_clever_adaptive(
     return error;
   }
 
-  ALIAS_TEMPLATE_FUNCTION(triangulize_full_clever, triangulize_full_clever_adaptive)
+  ALIAS_TEMPLATE_FUNCTION(triangulize_full_clever, triangulize_full_clever_parametric)
 
   /*
     Calculate the central_points of triangles i.e. barycenters

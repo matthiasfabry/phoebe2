@@ -1389,6 +1389,7 @@ static PyObject *roche_area_volume([[maybe_unused]] PyObject *self, PyObject *ar
     (char*)"lvolume",
     (char*)"epsA",
     (char*)"epsV",
+    (char*)"do_checks",
     NULL};
 
   int choice = 0;
@@ -1396,18 +1397,21 @@ static PyObject *roche_area_volume([[maybe_unused]] PyObject *self, PyObject *ar
   double eps[2] = {1e-12, 1e-12};
 
   bool b_av[2] = {true, true};  // b_larea, b_lvolume
+  bool b_checks = true;
 
   PyObject *o_av[2] = {0, 0};    // *o_larea = 0, *o_lvolume = 0;
+  PyObject *o_checks = 0;
 
   double q, F, delta, Omega0;
 
   if (!PyArg_ParseTupleAndKeywords(
-      args, keywds,  "dddd|iO!O!dd", kwlist,
+      args, keywds,  "dddd|iO!O!ddO!", kwlist,
       &q, &F, &delta, &Omega0,
       &choice,
       &PyBool_Type, o_av,
       &PyBool_Type, o_av + 1,
-      eps, eps + 1
+      eps, eps + 1,
+      &PyBool_Type, &o_checks
       )
     ) {
 
@@ -1420,6 +1424,7 @@ static PyObject *roche_area_volume([[maybe_unused]] PyObject *self, PyObject *ar
   //
   // Read boolean variables and define result-choice
   //
+  if (o_checks) b_checks = PyObject_IsTrue(o_checks);
   for (int i = 0, j = 1; i < 2; ++i, j <<=1) {
     if (o_av[i]) b_av[i] = PyObject_IsTrue(o_av[i]);
     if (b_av[i]) res_choice += j;
@@ -1465,7 +1470,7 @@ static PyObject *roche_area_volume([[maybe_unused]] PyObject *self, PyObject *ar
 
     double xrange[2];
 
-    if (!gen_roche::lobe_xrange(xrange, choice, Omega0, q, F, delta, true)){
+    if (!gen_roche::lobe_xrange(xrange, choice, Omega0, q, F, delta, b_checks)){
       raise_exception(fname + "Determining lobe's boundaries failed");
       return NULL;
     }
@@ -4192,10 +4197,11 @@ static PyObject *roche_marching_mesh([[maybe_unused]] PyObject *self, PyObject *
     (char*)"area",
     (char*)"volume",
     (char*)"init_phi",
+    (char*)"delta_left",
     NULL};
 
   double q, F, d, Omega0, delta,
-          init_phi = 0;
+          init_phi = 0, delta_left = 0;
 
   int choice = 0,
       max_triangles = 10000000; // 10^7
@@ -4230,7 +4236,7 @@ static PyObject *roche_marching_mesh([[maybe_unused]] PyObject *self, PyObject *
     *o_volume = 0;
 
   if (!PyArg_ParseTupleAndKeywords(
-      args, keywds,  "ddddd|iiO!O!O!O!O!O!O!O!O!O!O!O!d", kwlist,
+      args, keywds,  "ddddd|iiO!O!O!O!O!O!O!O!O!O!O!O!dd", kwlist,
       &q, &F, &d, &Omega0, &delta, // neccesary
       &choice,                     // optional ...
       &max_triangles,
@@ -4246,7 +4252,7 @@ static PyObject *roche_marching_mesh([[maybe_unused]] PyObject *self, PyObject *
       &PyBool_Type, &o_areas,
       &PyBool_Type, &o_area,
       &PyBool_Type, &o_volume,
-      &init_phi
+      &init_phi, &delta_left
       )) {
 
     raise_exception(fname + "::Problem reading arguments");
@@ -4317,7 +4323,7 @@ static PyObject *roche_marching_mesh([[maybe_unused]] PyObject *self, PyObject *
 
   int error =
     (b_full ?
-      march.triangulize_full_clever(r, g, delta, max_triangles, V, NatV, Tr, GatV, init_phi) :
+      march.triangulize_full_clever(r, g, delta, max_triangles, V, NatV, Tr, GatV, init_phi, delta_left) :
       march.triangulize(r, g, delta, max_triangles, V, NatV, Tr, GatV, init_phi)
     );
 

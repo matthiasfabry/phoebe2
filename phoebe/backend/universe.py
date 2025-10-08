@@ -2318,21 +2318,21 @@ class Star_roche_envelope_half(Star):
             # we need the surface area of the lobe to estimate the correct value
             # to pass for delta to marching.  We will later need the volume to
             # expose its value
-            logger.debug("libphoebe.roche_area_volume{}".format(mesh_args))
-            av = libphoebe.roche_area_volume(*mesh_args,
-                                             choice=2,
-                                             larea=True,
-                                             lvolume=True)
+            logger.debug("libphoebe.roche_area_volume1{}".format(mesh_args))
+            av1 = libphoebe.roche_area_volume(*mesh_args, choice=0, larea=True, lvolume=True, do_checks=False)
+            logger.debug("libphoebe.roche_area_volume2{}".format(mesh_args))
+            av2 = libphoebe.roche_area_volume(*mesh_args, choice=1, larea=True, lvolume=True, do_checks=False)
 
-            delta = _estimate_delta(ntriangles, av['larea'])
+            delta1 = _estimate_delta(ntriangles / 2, av1['larea'])
+            delta2 = _estimate_delta(ntriangles / 2, av2['larea'])
 
             logger.debug("libphoebe.roche_marching_mesh{}".format(mesh_args))
             try:
                 new_mesh = libphoebe.roche_marching_mesh(*mesh_args,
-                                                         delta=delta,
+                                                         delta=delta2,
                                                          choice=2,
                                                          full=True,
-                                                         max_triangles=int(ntriangles*1.5),
+                                                         max_triangles=int(ntriangles*4),
                                                          vertices=True,
                                                          triangles=True,
                                                          centers=True,
@@ -2343,7 +2343,8 @@ class Star_roche_envelope_half(Star):
                                                          cnormgrads=False,
                                                          areas=True,
                                                          volume=False,
-                                                         init_phi=kwargs.get('mesh_init_phi', self.mesh_init_phi))
+                                                         init_phi=kwargs.get('mesh_init_phi', self.mesh_init_phi),
+                                                         delta_left=delta1)
             except Exception as err:
                 if str(err) == 'There are too many triangles!':
                     mesh_init_phi_attempts = kwargs.get('mesh_init_phi_attempts', 1) + 1
@@ -2362,8 +2363,8 @@ class Star_roche_envelope_half(Star):
             # the volume and surface area of the lobe.  The lobe area is used
             # if mesh_offseting is required, and the volume is optionally exposed
             # to the user.
-            new_mesh['volume'] = av['lvolume']  # * sma**3
-            new_mesh['area'] = av['larea']      # * sma**2
+            new_mesh['volume'] = av1['lvolume'] + av2['lvolume']  # * sma**3
+            new_mesh['area'] = av1['larea'] + av2['larea']       # * sma**2
 
             scale = sma
 
