@@ -1,6 +1,7 @@
 /build
 /dist
 .vscode
+.idea
 /phoebe/atmospheres/tables/ck2004
 /phoebe/atmospheres/tables/ck2004i
 /phoebe/atmospheres/tables/phoenix
