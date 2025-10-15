@@ -1666,7 +1666,9 @@ T delta_map(T delta_right, T delta_left, T x, T x0, T alpha, T delta_min) {
       delta - size of triangles edges projected to tangent space
       max_triangles - maximal number of triangles used
       init_phi - rotation of the initial hexagon
-      delta_left - size of triangles on the left size of a contact binary, interprets delta == delta_right
+      delta_left - size of triangles on the left size of a contact binary, interprets delta == delta_right (zero to ignore = default)
+      alpha_neck - width of central gaussian for contacts meshing increase (0.15)
+      delta_fac - fraction of delta (not delta_left) to lower the step by maximally in the neck region (0.33)
 
     Output:
       V - vector of vertices
@@ -1682,14 +1684,16 @@ T delta_map(T delta_right, T delta_left, T x, T x0, T alpha, T delta_min) {
 int triangulize_full_clever_parametric(
     T init_r[3],
     T init_g[3],
-    const T & delta_in,
-    const unsigned & max_triangles,
-    std::vector <T3Dpoint<T>> & V,
-    std::vector <T3Dpoint<T>> & NatV,
-    std::vector <T3Dpoint<int>> & Tr,
-    std::vector<T> * GatV = 0,
-    const T & init_phi = 0,
-    const T & delta_left = 0)
+    const T& delta,
+    const unsigned& max_triangles,
+    std::vector <T3Dpoint<T>>& V,
+    std::vector <T3Dpoint<T>>& NatV,
+    std::vector <T3Dpoint<int>>& Tr,
+    std::vector<T>* GatV = 0,
+    const T& init_phi = 0,
+    const T& delta_left = 0,
+    const T& alpha_neck = 0.15,
+    const T& delta_fac = 0.33)
   {
 
     // start with normal precision defined by T
@@ -1714,8 +1718,7 @@ int triangulize_full_clever_parametric(
     auto d2 = [&] (auto it0, auto it1) { return dist2(it0->r, it1->r); };
 
     // settings for adaptive step
-    T alpha = 0.1;                  // width of central gaussian for contacts
-    T delta_min = delta_in * 0.33;  // lowest step
+    const T delta_min = delta * delta_fac;  // lowest step
     T l1pot[3], x_l1[3];
 
     if (delta_left != 0) {  // compute x_l1 in case of contact binary
@@ -1734,7 +1737,7 @@ int triangulize_full_clever_parametric(
 
       // construct the vector base
       create_internal_vertex(init_r, init_g, v, init_phi);
-      v.delta = delta_in;
+      v.delta = delta;
 
       // add vertex to the set, index 0
       V.emplace_back(v.r);                  // saving only r
@@ -1742,7 +1745,7 @@ int triangulize_full_clever_parametric(
       NatV.emplace_back(v.b[2]);            // saving only normal
 
       T sa[6], ca[6], qk[3], u[3];
-      utils::sincos_array(5, utils::m_pi3, sa, ca, delta_in);
+      utils::sincos_array(5, utils::m_pi3, sa, ca, delta);
 
       for (int k = 0; k < 6 && error == 0; ++k){
 
@@ -1750,7 +1753,7 @@ int triangulize_full_clever_parametric(
           qk[i] = v.r[i] + (u[i] = ca[k]*v.b[0][i] + sa[k]*v.b[1][i]);
 
         if (
-            !slide_over_potential(v.r, v.b[2], u, delta_in, vk, max_iter) &&
+            !slide_over_potential(v.r, v.b[2], u, delta, vk, max_iter) &&
             !project_onto_potential(qk, vk, max_iter, v.b[2])
            ) {
           std::cerr << "Warning: Projection did not converge for initial frontal polygon!\n";
@@ -1763,9 +1766,9 @@ int triangulize_full_clever_parametric(
 
         // mapping
         if (delta_left != 0) {
-          vk.delta = delta_map(delta_in, delta_left, vk.r[0], x_l1[0], alpha, delta_min);
+          vk.delta = delta_map(delta, delta_left, vk.r[0], x_l1[0], alpha_neck, delta_min);
         } else {
-          vk.delta = delta_in;
+          vk.delta = delta;
         }
 
         P.push_back(vk);
@@ -1785,14 +1788,14 @@ int triangulize_full_clever_parametric(
     //
     //  Triangulization of genus 0 surfaces
     //
-    T delta_in2 = 0.5 * delta_in * delta_in;
-    T delta_local = delta_in;
-    T delta_local2 = delta_in2;
+    T delta2 = 0.5 * delta * delta;
+    T delta_local = delta;
+    T delta_local2 = delta2;
 
     do {
       // current front polygon
-      Tfront_polygon & P  = lP.back();
-      Tbad_pair & B = lB.back();
+      Tfront_polygon& P  = lP.back();
+      Tbad_pair& B = lB.back();
 
       do {
         //
@@ -1842,7 +1845,6 @@ int triangulize_full_clever_parametric(
             lB.push_back(check_bad_pairs(P2, delta_local2));
 
             //std::cerr << "sizes:" <<  P1.size() << '\t' << P2.size() << '\n';
-
             break;
           }
         }
@@ -2009,10 +2011,10 @@ int triangulize_full_clever_parametric(
               vp->omega_changed = true;
               // compute curvature
               if (delta_left != 0) {
-                 vp->delta = delta_map(delta_in, delta_left, vp->r[0], x_l1[0], alpha, delta_min);
+                 vp->delta = delta_map(delta, delta_left, vp->r[0], x_l1[0], alpha_neck, delta_min);
                  std::cerr << vp->r[0] << x_l1[0] << vp->delta << std::endl;
               } else {
-                 vp->delta = delta_in;
+                 vp->delta = delta;
               }
               // do shrinking also in the neck of a contact binary
               V.emplace_back(vp->r);                    // saving only r
@@ -2024,18 +2026,15 @@ int triangulize_full_clever_parametric(
             }
 
             // Note: n = V.size();
-
             // add triangle
             Tr.emplace_back(n - 1, it_next->index, it_min->index);
 
             // add vertices to front and replace minimal
             *(it_min++) = *Pi;
-
             auto it0 = P.insert(it_min, Pi + 1, Pi + nt - 1),
 
             // check if there are any bad pairs
             it1 = (--it0) + nt - 1;
-
             B = check_bad_pairs(P, it0, it1, delta_local2);
 
           } else {
