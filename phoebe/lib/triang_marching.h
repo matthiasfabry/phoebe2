@@ -1667,8 +1667,8 @@ T delta_map(T delta_right, T delta_left, T x, T x0, T alpha, T delta_min) {
       max_triangles - maximal number of triangles used
       init_phi - rotation of the initial hexagon
       delta_left - size of triangles on the left size of a contact binary, interprets delta == delta_right (zero to ignore = default)
-      alpha_neck - width of central gaussian for contacts meshing increase (0.15)
       delta_fac - fraction of delta (not delta_left) to lower the step by maximally in the neck region (0.33)
+      alpha_neck - width of central gaussian for contacts meshing increase (0.15)
 
     Output:
       V - vector of vertices
@@ -1692,8 +1692,8 @@ int triangulize_full_clever_parametric(
     std::vector<T>* GatV = 0,
     const T& init_phi = 0,
     const T& delta_left = 0,
-    const T& alpha_neck = 0.15,
-    const T& delta_fac = 0.33)
+    const T& delta_fac = 0.33,
+    const T& alpha_neck = 0.15)
   {
 
     // start with normal precision defined by T

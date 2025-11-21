@@ -2372,7 +2372,8 @@ class Star_roche_envelope_half(Star):
                                                          areas=True,
                                                          volume=False,
                                                          init_phi=kwargs.get('mesh_init_phi', self.mesh_init_phi),
-                                                         delta_left=delta1)
+                                                         delta_left=delta1,
+                                                         delta_fac=1.0)
                 # new_mesh = libphoebe.roche_marching_mesh(.5, 1.0, 1.0, 2.60711,
                 #                 delta=5.09e-2, choice=2, full=True,
                 #                 max_triangles=12000, vertices=True, triangles=True, centers=True,
@@ -2411,7 +2412,7 @@ class Star_roche_envelope_half(Star):
         else:
             raise NotImplementedError("mesh_method '{}' is not supported".format(mesh_method))
 
-        return new_mesh, scale
+        return new_mesh, sma
 
 
 class Star_rotstar(Star):
