@@ -2322,7 +2322,7 @@ class Star_roche_envelope_half(Star):
         new_mesh_dict['normgrads'] = new_mesh_dict.pop('vnormgrads', np.array([]))
 
         # And lastly, let's fill the velocities column - with zeros at each of the vertices
-        new_mesh_dict['velocities'] = np.zeros(new_mesh_dict['vertices'].shape if self.mesh_method != 'wd' else new_mesh_dict['centers'].shape)
+        new_mesh_dict['velocities'] = np.zeros(new_mesh_dict['vertices'].shape)
         new_mesh_dict['tareas'] = np.array([])
 
         protomesh = mesh.ProtoMesh(**new_mesh_dict)
@@ -2350,7 +2350,6 @@ class Star_roche_envelope_half(Star):
             av1 = libphoebe.roche_area_volume(*mesh_args, choice=0, larea=True, lvolume=True, do_checks=False)
             logger.debug("libphoebe.roche_area_volume2{}".format(mesh_args))
             av2 = libphoebe.roche_area_volume(*mesh_args, choice=1, larea=True, lvolume=True, do_checks=False)
-
             delta1 = _estimate_delta(ntriangles / 2, av1['larea'])
             delta2 = _estimate_delta(ntriangles / 2, av2['larea'])
 
@@ -2397,8 +2396,9 @@ class Star_roche_envelope_half(Star):
             # the volume and surface area of the lobe.  The lobe area is used
             # if mesh_offseting is required, and the volume is optionally exposed
             # to the user.
-            new_mesh['volume'] = av1['lvolume'] + av2['lvolume']  # * sma**3
-            new_mesh['area'] = av1['larea'] + av2['larea']       # * sma**2
+            av = libphoebe.roche_area_volume(*mesh_args, choice=2, larea=True, lvolume=True, do_checks=False)
+            new_mesh['volume'] = av['lvolume'] # * sma**3
+            new_mesh['area'] = av['larea']     # * sma**2
 
         elif mesh_method == 'wd':
             N = int(kwargs.get('gridsize', self.gridsize))
