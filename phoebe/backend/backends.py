@@ -934,7 +934,7 @@ class PhoebeBackend(BaseBackendByTime):
                                           lc_only=True,
                                           **kwargs):
 
-        logger.debug("rank:{}/{} PhoebeBackend._create_system_and_compute_pblums: calling universe.System.from_bundle".format(mpi.myrank, mpi.nprocs))
+        logger.debug("rank:{}/{} PhoebeBackend._compute_intrinsic_system_at_t0: calling universe.System.from_bundle".format(mpi.myrank, mpi.nprocs))
         system = universe.System.from_bundle(b, compute, datasets=b.datasets, **kwargs)
 
         if dynamics_method is None:
@@ -954,7 +954,7 @@ class PhoebeBackend(BaseBackendByTime):
         t0 = b.get_value(qualifier='t0', context='system', unit=u.d, t0=kwargs.get('t0', None), **_skip_filter_checks)
 
         if len(meshablerefs) > 1 or hier.get_kind_of(meshablerefs[0])=='envelope':
-            logger.debug("rank:{}/{} PhoebeBackend._create_system_and_compute_pblums: computing dynamics at t0".format(mpi.myrank, mpi.nprocs))
+            logger.debug("rank:{}/{} PhoebeBackend._compute_intrinsic_system_at_t0: computing dynamics at t0".format(mpi.myrank, mpi.nprocs))
             # TODO: make sure that this takes systemic velocity and corrects positions and velocities (including ltte effects if enabled)
             t0, xs0, ys0, zs0, vxs0, vys0, vzs0, ethetas0, elongans0, eincls0 = dynamics.keplerian.dynamics_from_bundle(b, [t0], compute, return_euler=True, **kwargs)
             x0, y0, z0, vx0, vy0, vz0, etheta0, elongan0, eincl0 = dynamics.dynamics_at_i(xs0, ys0, zs0, vxs0, vys0, vzs0, ethetas0, elongans0, eincls0, i=0)
@@ -981,6 +981,9 @@ class PhoebeBackend(BaseBackendByTime):
         if 'envelope' in b.filter(context='component'):  # only makes sense when an envelope is present
             mixing_enabled = b.get_value(qualifier='mixing_enabled', context='component', **_skip_filter_checks)
             if mixing_enabled:
+                logger.debug(
+                    "rank:{}/{} PhoebeBackend._compute_intrinsic_system_at_t0: computing ET".format(
+                        mpi.myrank, mpi.nprocs))
                 self._do_mixing(b, system)
 
         system.populate_observables(t0, ['lc' for dataset in datasets], datasets, ignore_effects=True)
@@ -1111,6 +1114,7 @@ class PhoebeBackend(BaseBackendByTime):
             if 'envelope' in b.filter(context='component'):  # only makes sense when an envelope is present
                 mixing_enabled = b.get_value(qualifier='mixing_enabled', context='component', **_skip_filter_checks)
                 if mixing_enabled and i==0:
+                    logger.debug('rank:{}/{} PhoebeBackend._run_single_time: applying envelope ET at time={}'.format(mpi.myrank, mpi.nprocs, time))
                     self._do_mixing(b, system)
 
             # Now we need to determine which triangles are visible and handle subdivision

@@ -286,19 +286,22 @@ def lateral_transfer(t2s, teffs2, teff_ratio, mixing_params):
     Scales the temperatures of the secondary to that of the primary only in a horizontal band the size of the contact's
     neck. This implies mixing occurs due to mass transfer across the neck.
     """
+
+    latitude_drop, longitude_drop, z_height = mixing_params
+
     x2s = t2s[:, 0]
     y2s = t2s[:, 1]
     z2s = t2s[:, 2]
 
     z2s_neck = z2s[x2s < 1]
-    lat = mixing_params[2] * z2s_neck.max()
+    lat = z_height * z2s_neck.max()
     filt = (z2s > -lat) & (z2s < lat)  # select band extending the (projected) height
     # latitude dependence
-    c = (lat - np.abs(z2s[filt])) ** mixing_params[0]
+    c = (lat - np.abs(z2s[filt])) ** latitude_drop
     latitude_dependence = c / c.max()  # [0, 1]
     # longitude dependence
     phi = np.arctan2(y2s[filt], x2s[filt] - 1) + np.pi  # [0, 2pi)
-    c = (phi.max() - phi) ** mixing_params[1]
+    c = (phi.max() - phi) ** longitude_drop
     longitude_dependence = c / c.max()  # [0, 1]
 
     # total mixing function

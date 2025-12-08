@@ -296,7 +296,7 @@ class System(object):
                                  ds=ds, Fs=Fs, ignore_effects=ignore_effects)
 
 
-    def populate_observables(self, time, kinds, datasets, ignore_effects=False):
+    def populate_observables(self, time, kinds, datasets, ignore_effects=False, force_recompute=False):
         """
         TODO: add documentation
 
@@ -304,22 +304,22 @@ class System(object):
         """
 
 
-        if self.irrad_method != 'none' and not ignore_effects:
+        if self.irrad_method != 'none' and (not ignore_effects or force_recompute):
             # TODO: only for kinds that require intensities (i.e. not orbit or
             # dynamical RVs, etc)
-            self.handle_reflection()
+            self.handle_reflection(force_recompute=force_recompute)
 
         for kind, dataset in zip(kinds, datasets):
             for starref, body in self.items():
-                body.populate_observable(time, kind, dataset, ignore_effects=ignore_effects)
+                body.populate_observable(time, kind, dataset, ignore_effects=ignore_effects, force_recompute=force_recompute)
 
-    def handle_reflection(self,  **kwargs):
+    def handle_reflection(self, force_recompute=False):
         """
         """
         if self.irrad_method == 'none':
             return
 
-        if not self.needs_recompute_instantaneous and not self.is_first_refl_iteration:
+        if not self.needs_recompute_instantaneous and not self.is_first_refl_iteration and not force_recompute:
             logger.debug("reflection: using teffs from previous iteration")
             return
 
@@ -1045,7 +1045,7 @@ class Body(object):
         # TODO: get rid of the or True here... the problem is that we're saving the standard mesh before filling local quantities
         if self.needs_recompute_instantaneous or did_remesh or self._force_recompute_instantaneous_next_update_position:
             logger.debug("{}.update_position: calling compute_local_quantities at t={} ignore_effects={}".format(self.component, self.time, ignore_effects))
-            self.compute_local_quantities(xs, ys, zs, ignore_effects)
+            self.compute_local_quantities(ignore_effects)
             self._force_recompute_instantaneous_next_update_position = False
 
         return
@@ -1055,7 +1055,7 @@ class Body(object):
         """
         raise NotImplementedError("compute_local_quantities needs to be overridden by the subclass of Star")
 
-    def populate_observable(self, time, kind, dataset, ignore_effects=False, **kwargs):
+    def populate_observable(self, time, kind, dataset, ignore_effects=False, force_recompute=False, **kwargs):
         """
         TODO: add documentation
         """
@@ -1063,7 +1063,7 @@ class Body(object):
         if kind in ['mesh', 'orb']:
             return
 
-        if time==self.time and dataset in self.populated_at_time and 'pblum' not in kind:
+        if time==self.time and dataset in self.populated_at_time and 'pblum' not in kind and not force_recompute:
             # then we've already computed the needed columns
 
             # TODO: handle the case of intensities already computed by
@@ -1420,7 +1420,7 @@ class Star(Body):
         # return new_mesh_dict, scale
         raise NotImplementedError("_build_mesh must be overridden by the subclass of Star")
 
-    def compute_local_quantities(self, xs, ys, zs, ignore_effects=False, **kwargs):
+    def compute_local_quantities(self, ignore_effects=False, **kwargs):
         # Now fill local instantaneous quantities
         self._fill_loggs(ignore_effects=ignore_effects)
         self._fill_gravs()
@@ -1759,7 +1759,6 @@ class Star(Body):
         cols['rvs'] = rvs
         return cols
 
-
     def _populate_lc(self, dataset, ignore_effects=False, **kwargs):
         """
         Populate columns necessary for an LC dataset
@@ -1807,7 +1806,7 @@ class Star(Body):
         elif ld_mode == 'manual':
             ldatm = 'none'
         else:
-            raise NotImplementedError
+            raise NotImplementedError(ld_mode)
 
 
 
@@ -2179,6 +2178,7 @@ class Star_roche(Star):
 
         return new_mesh, scale
 
+
 class Star_roche_envelope_half(Star):
     def __init__(self, component, comp_no, ind_self, ind_sibling,
                  masses, ecc, incl,
@@ -2198,9 +2198,13 @@ class Star_roche_envelope_half(Star):
                  do_rv_grav,
                  features,
 
+                 delta_reduction_factor=1.0,  # we unpack the kwarg here which is passed from upstairs
                  **kwargs):
         """
         """
+
+        # scaling of the triangles in the neck of the mesh
+        self.delta_fac = delta_reduction_factor
         self.F = 1 # frontend run_checks makes sure that contacts are synchronous
         self.pot = kwargs.get('pot')
         # requiv won't be used, instead we'll use potential, but we'll allow
@@ -2232,6 +2236,7 @@ class Star_roche_envelope_half(Star):
         self.ind_self_vel = ind_self
 
 
+
     @classmethod
     def from_bundle(cls, b, component, compute=None,
                     datasets=[], pot=None, **kwargs):
@@ -2245,7 +2250,9 @@ class Star_roche_envelope_half(Star):
         kwargs.setdefault('mesh_method', b.get_value(qualifier='mesh_method', component=envelope, compute=compute, mesh_method=mesh_method_override, **_skip_filter_checks) if compute is not None else 'marching')
         ntriangles_override = kwargs.pop('ntriangles', None)
         kwargs.setdefault('ntriangles', b.get_value(qualifier='ntriangles', component=envelope, compute=compute, ntriangles=ntriangles_override, **_skip_filter_checks) if compute is not None else 1000)
+        kwargs.setdefault('delta_reduction_factor', b.get_value(qualifier='delta_reduction_factor', component=envelope, **_skip_filter_checks))
 
+        # delta_reduction_factor is carried upstairs, but gets passed down again (still as a kwarg) to Star_roche_envelope_half.__init__
         return super(Star_roche_envelope_half, cls).from_bundle(b, component, compute,
                                                   datasets,
                                                   pot=pot,
@@ -2314,7 +2321,7 @@ class Star_roche_envelope_half(Star):
         """
         logger.debug("{}.create_mesh ignore_effects={}".format(self.component, ignore_effects))
 
-        new_mesh_dict, scale = self._build_mesh(mesh_method=self.mesh_method)
+        new_mesh_dict, scale = self._build_mesh(mesh_method=self.mesh_method, delta_reduction_factor=self.delta_fac)
         new_mesh_dict = self._offset_mesh(new_mesh_dict)
 
         # We only need the gradients where we'll compute local
@@ -2372,7 +2379,7 @@ class Star_roche_envelope_half(Star):
                                                          volume=False,
                                                          init_phi=kwargs.get('mesh_init_phi', self.mesh_init_phi),
                                                          delta_left=delta1,
-                                                         delta_fac=1.0)
+                                                         delta_fac=kwargs.get('delta_reduction_factor', 1.0))
                 # new_mesh = libphoebe.roche_marching_mesh(.5, 1.0, 1.0, 2.60711,
                 #                 delta=5.09e-2, choice=2, full=True,
                 #                 max_triangles=12000, vertices=True, triangles=True, centers=True,
@@ -2399,7 +2406,6 @@ class Star_roche_envelope_half(Star):
             av = libphoebe.roche_area_volume(*mesh_args, choice=2, larea=True, lvolume=True, do_checks=False)
             new_mesh['volume'] = av['lvolume'] # * sma**3
             new_mesh['area'] = av['larea']     # * sma**2
-
         elif mesh_method == 'wd':
             N = int(kwargs.get('gridsize', self.gridsize))
 
@@ -2952,6 +2958,15 @@ class Envelope(Body):
         contact envelopes never need remeshing
         """
         return False
+
+    def reset(self, force_remesh=False, force_recompute_instantaneous=False):
+        if force_remesh:
+            logger.debug("{}.reset: forcing remesh and recompute_instantaneous for next iteration".format(self.component))
+        elif force_recompute_instantaneous:
+            logger.debug("{}.reset: forcing recompute_instantaneous for next iteration".format(self.component))
+
+        for _, half in self.halves.items():
+            half.reset(force_remesh, force_recompute_instantaneous)
 
     def update_position(self, *args, **kwargs):
 
