@@ -347,7 +347,6 @@ class System(object):
         if len(fluxes_intrins_per_body) == 1 and np.all([body.is_convex for body in self.bodies]):
             logger.info("skipping reflection because only 1 (convex) body")
             return
-
         elif np.all([body.is_convex for body in self.bodies]):
             logger.debug("handling reflection (convex case), method='{}'".format(self.irrad_method))
 
@@ -372,7 +371,6 @@ class System(object):
                                                                                        )
 
             fluxes_intrins_and_refl_flat = meshes.pack_column_flat(fluxes_intrins_and_refl_per_body)
-
         else:
             logger.debug("handling reflection (general case), method='{}'".format(self.irrad_method))
 
@@ -396,7 +394,6 @@ class System(object):
                                                                             _bytes(self.irrad_method.title()),
                                                                             support=_bytes('vertices')
                                                                             )
-
 
 
         teffs_intrins_flat = meshes.get_column_flat('teffs', computed_type='for_computations')
@@ -1808,9 +1805,6 @@ class Star(Body):
         else:
             raise NotImplementedError(ld_mode)
 
-
-
-
         logger.debug("ld_func={}, ld_coeffs={}, atm={}, ldatm={}".format(ld_func, ld_coeffs, atm, ldatm))
 
         pblum = kwargs.get('pblum', 4*np.pi)
@@ -2971,10 +2965,9 @@ class Envelope(Body):
     def update_position(self, *args, **kwargs):
 
         def split_mesh(mesh_in, q, pot):
-            logger.debug("splitting envelope mesh according to neck min")
+            logger.debug("{}.update_position: splitting envelope mesh according to neck min".format(self))
 
             # compute position of nekmin (d=1.)
-            logger.debug("split_mesh libphoebe.roche_contact_neck_min(q={}, d={}, pot={})".format(q, 1., pot))
             nekmin = libphoebe.roche_contact_neck_min(np.pi / 2., q, 1., pot)['xmin']
 
             # initialize the subcomp array
@@ -3055,7 +3048,7 @@ class Envelope(Body):
                 # info0 = libphoebe.roche_contact_partial_area_volume(nekmin, q, 1.0, pot, compno+1)
                 # mesh._volume = info0['lvolume']
                 # mesh._area = info0['lvolume']
-            logger.debug('splitting complete')
+            logger.debug('{}.update_position: splitting complete'.format(self))
             return mesh_halves
 
         if not (self._halves[0].has_standard_mesh() and self._halves[1].has_standard_mesh()):
@@ -3085,6 +3078,7 @@ class Envelope(Body):
             mesh_primary, mesh_secondary = split_mesh(mesh_contact, self._q, self._pot)
 
             # now override the standard mesh with just the corresponding halves
+            logger.debug('{}.update_position: saving split standard mesh'.format(self))
             self._halves[0].save_as_standard_mesh(mesh_primary)
             self._halves[1].save_as_standard_mesh(mesh_secondary)
             # force local quantities to be "recomputed" at next update_position call because we'll split the mesh first.

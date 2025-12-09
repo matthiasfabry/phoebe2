@@ -1015,14 +1015,15 @@ class PhoebeBackend(BaseBackendByTime):
                                                                     mixing_method=mixing_method,
                                                                     mixing_params=mixing_params,
                                                                     teff_ratio=teff_ratio)
-        # w=smoothing_factor, cutoff=0.)
         primary_mesh.update_columns(teffs=new_teffs1)
         secondary_mesh.update_columns(teffs=new_teffs2)
 
-        # print("new_teffs1.median", np.median(new_teffs1))
-        # print("new_teffs2.median", np.median(new_teffs2))
         system.bodies[0]._halves[0].smoothed_teffs = new_teffs1
         system.bodies[0]._halves[1].smoothed_teffs = new_teffs2
+
+        logger.debug("rank:{}/{} PhoebeBackend_do_mixing: copying ET'ed teffs to standard meshes".format(mpi.myrank, mpi.nprocs))
+        system.bodies[0]._halves[0]._standard_meshes[0].update_columns(teffs=new_teffs1)
+        system.bodies[0]._halves[1]._standard_meshes[0].update_columns(teffs=new_teffs2)
 
     def _worker_setup(self, b, compute, times, infolists, **kwargs):
         logger.debug("rank:{}/{} PhoebeBackend._worker_setup: extracting parameters".format(mpi.myrank, mpi.nprocs))
