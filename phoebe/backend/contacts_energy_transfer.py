@@ -288,14 +288,17 @@ def lateral_transfer(t2s, teffs2, teff_ratio, mixing_params):
     """
 
     latitude_drop, longitude_drop, z_height = mixing_params
+    if z_height == 0.0:
+        return teffs2  # nothing to do if the band has a height of zero
 
     x2s = t2s[:, 0]
     y2s = t2s[:, 1]
     z2s = t2s[:, 2]
 
+    # select band extending the (projected) height
     z2s_neck = z2s[x2s < 1]
     lat = z_height * z2s_neck.max()
-    filt = (z2s > -lat) & (z2s < lat)  # select band extending the (projected) height
+    filt = (z2s > -lat) & (z2s < lat)
     # latitude dependence
     c = (lat - np.abs(z2s[filt])) ** latitude_drop
     latitude_dependence = c / c.max()  # [0, 1]

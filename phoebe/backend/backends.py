@@ -977,7 +977,7 @@ class PhoebeBackend(BaseBackendByTime):
 
         system.update_positions(t0, x0, y0, z0, vx0, vy0, vz0, etheta0, elongan0, eincl0, ignore_effects=True)
 
-        #ENERGY TRANSFER FOR CONTACTS
+        #ENERGY TRANSFER FOR CONTACTS  is this optional for intrinsic_system_at_t0?
         if 'envelope' in b.filter(context='component'):  # only makes sense when an envelope is present
             mixing_enabled = b.get_value(qualifier='mixing_enabled', context='component', **_skip_filter_checks)
             if mixing_enabled:

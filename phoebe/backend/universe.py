@@ -296,7 +296,7 @@ class System(object):
                                  ds=ds, Fs=Fs, ignore_effects=ignore_effects)
 
 
-    def populate_observables(self, time, kinds, datasets, ignore_effects=False, force_recompute=False):
+    def populate_observables(self, time, kinds, datasets, ignore_effects=False):
         """
         TODO: add documentation
 
@@ -304,14 +304,14 @@ class System(object):
         """
 
 
-        if self.irrad_method != 'none' and (not ignore_effects or force_recompute):
+        if self.irrad_method != 'none' and not ignore_effects:
             # TODO: only for kinds that require intensities (i.e. not orbit or
             # dynamical RVs, etc)
-            self.handle_reflection(force_recompute=force_recompute)
+            self.handle_reflection()
 
         for kind, dataset in zip(kinds, datasets):
             for starref, body in self.items():
-                body.populate_observable(time, kind, dataset, ignore_effects=ignore_effects, force_recompute=force_recompute)
+                body.populate_observable(time, kind, dataset, ignore_effects=ignore_effects)
 
     def handle_reflection(self, force_recompute=False):
         """
