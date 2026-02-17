@@ -281,7 +281,7 @@ def gaussian_smoothing(xyz1, teffs1, xyz2, teffs2, w=0.5, cutoff=0., offset=0.):
     return teffs1, teffs2
 
 
-def lateral_transfer(t2s, teffs2, teff_ratio, mixing_params):
+def lateral_transfer(t1s, teffs1, t2s, teffs2, teff_ratio, mixing_params):
     """
     Scales the temperatures of the secondary to that of the primary only in a horizontal band the size of the contact's
     neck. This implies mixing occurs due to mass transfer across the neck.
@@ -289,21 +289,28 @@ def lateral_transfer(t2s, teffs2, teff_ratio, mixing_params):
 
     latitude_drop, longitude_drop, z_height = mixing_params
     if z_height == 0.0:
-        return teffs2  # nothing to do if the band has a height of zero
-
-    x2s = t2s[:, 0]
-    y2s = t2s[:, 1]
-    z2s = t2s[:, 2]
-
+        return teffs1, teffs2  # nothing to do if the band has a height of zero
+    if teff_ratio <= 1:
+        xs = t2s[:, 0]
+        ys = t2s[:, 1]
+        zs = t2s[:, 2]
+        zs_neck = zs[xs < 1]
+    else:
+        xs = t1s[:, 0]
+        ys = t1s[:, 1]
+        zs = t1s[:, 2]
+        zs_neck = zs[xs > 0]
     # select band extending the (projected) height
-    z2s_neck = z2s[x2s < 1]
-    lat = z_height * z2s_neck.max()
-    filt = (z2s > -lat) & (z2s < lat)
+    lat = z_height * zs_neck.max()
+    filt = (zs > -lat) & (zs < lat)
     # latitude dependence
-    c = (lat - np.abs(z2s[filt])) ** latitude_drop
+    c = (lat - np.abs(zs[filt])) ** latitude_drop
     latitude_dependence = c / c.max()  # [0, 1]
     # longitude dependence
-    phi = np.arctan2(y2s[filt], x2s[filt] - 1) + np.pi  # [0, 2pi)
+    if teff_ratio <= 1:
+        phi = np.arctan2(ys[filt], xs[filt] - 1) + np.pi  # [0, 2pi)
+    else:
+        phi = np.arctan2(ys[filt], xs[filt])
     c = (phi.max() - phi) ** longitude_drop
     longitude_dependence = c / c.max()  # [0, 1]
 
@@ -311,9 +318,12 @@ def lateral_transfer(t2s, teffs2, teff_ratio, mixing_params):
     prod = latitude_dependence * longitude_dependence
 
     # map [0, 1] to [1, 1/teff_ratio]
-    teffs2[filt] *= 1 + (1/teff_ratio - 1) * prod
+    if teff_ratio <= 1:
+        teffs2[filt] *= 1 + (1/teff_ratio - 1) * prod
+    else:
+        teffs1[filt] *= 1 + (teff_ratio - 1) * prod
 
-    return teffs2
+    return teffs1, teffs2
 
 
 def isotropic_transfer(t2s, teffs2, teff_ratio, mixing_params):
@@ -368,7 +378,7 @@ def mix_teffs(xyz1, teffs1, xyz2, teffs2, mixing_method='lateral',
     modified Teffs of the primary, modified Teffs of the secondary
     """
     if mixing_method == 'lateral':
-        teffs2 = lateral_transfer(xyz2, teffs2, teff_ratio, mixing_params)
+        teffs1, teffs2 = lateral_transfer(xyz1, teffs1, xyz2, teffs2, teff_ratio, mixing_params)
     elif mixing_method == 'isotropic':
         teffs2 = isotropic_transfer(xyz2, teffs2, teff_ratio, mixing_params)
     elif mixing_method == 'internal':

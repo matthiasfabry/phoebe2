@@ -2348,9 +2348,9 @@ class Star_roche_envelope_half(Star):
             # to pass for delta to marching.  We will later need the volume to
             # expose its value
             logger.debug("libphoebe.roche_area_volume1{}".format(mesh_args))
-            av1 = libphoebe.roche_area_volume(*mesh_args, choice=0, larea=True, lvolume=True, do_checks=False)
+            av1 = libphoebe.roche_area_volume(*mesh_args, choice=0, larea=True, lvolume=False, do_checks=False)
             logger.debug("libphoebe.roche_area_volume2{}".format(mesh_args))
-            av2 = libphoebe.roche_area_volume(*mesh_args, choice=1, larea=True, lvolume=True, do_checks=False)
+            av2 = libphoebe.roche_area_volume(*mesh_args, choice=1, larea=True, lvolume=False, do_checks=False)
             delta1 = _estimate_delta(ntriangles / 2, av1['larea'])
             delta2 = _estimate_delta(ntriangles / 2, av2['larea'])
 
