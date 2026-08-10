@@ -1085,6 +1085,383 @@ class Body(object):
 
         self.populated_at_time.append(dataset)
 
+class Disk(Body):
+    """
+    Simple model of a axisymmetric disk around a star.  The disk is assumed to be circular.
+    """
+    def __init__(self, component, comp_no, ind_self, ind_sibling, masses,
+                 ecc, incl, long_an, t0,
+                 do_mesh_offset=True,
+                 mesh_init_phi=0.0):
+        """
+        TODO: add documentation
+        """
+
+        # TODO: eventually some of this stuff that assumes a BINARY orbit may need to be moved into
+        # some subclass of Body (maybe BinaryBody).  These will want to be shared by Star and CustomBody,
+        # but probably won't be shared by disk/ring-type objects
+
+        # Let's remember the component number of this star in the parent orbit
+        # 1 = primary
+        # 2 = secondary
+        self.comp_no = comp_no
+        self.component = component
+
+        # We need to remember what index in all incoming position/velocity/euler
+        # arrays correspond to both ourself and our sibling
+        self.ind_self = ind_self
+        self.ind_self_vel = ind_self
+        self.ind_sibling = ind_sibling
+
+        # compute q: notice that since we always do sibling_mass/self_mass, this
+        # will automatically invert the value of q for the secondary component
+        sibling_mass = self._get_mass_by_index(self.ind_sibling)
+        self_mass = self._get_mass_by_index(self.ind_self)
+        self.q = _value(sibling_mass / self_mass)
+
+        # self.mesh will be filled later once a mesh is created and placed in orbit
+        self._mesh = None
+        self._force_recompute_instantaneous_next_update_position = False
+
+        # TODO: double check to see if these are still used or can be removed
+        self.t0 = t0   # t0@system
+        self.time = None
+        self.inst_vals = {}
+        self.true_anom = 0.0
+        self.elongan = long_an
+        self.eincl = incl
+        self.populated_at_time = []
+
+        self.incl_orbit = incl
+        self.longan_orbit = long_an
+
+        self.inner_radius = 1
+        self.outer_radius = 2
+
+        # Let's create a dictionary to store "standard" protomeshes at different "phases"
+        # For example, we may want to store the mesh at periastron and use that as a standard
+        # for reprojection for volume conservation in eccentric orbits.
+        # Storing meshes should only be done through self.save_as_standard_mesh(theta)
+        self._standard_meshes = {}
+
+    def copy(self):
+        """
+        Make a deepcopy of this Mesh object
+        """
+        return copy.deepcopy(self)
+
+    @property
+    def mesh(self):
+        """
+        TODO: add documentation
+        """
+        # if not self._mesh:
+            # self._mesh = self.get_standard_mesh(scaled=True)
+
+        # NOTE: self.mesh is the SCALED mesh PLACED in orbit at the current
+        # time (self.time).  If this isn't available yet, self.mesh will
+        # return None (it is reset to None by self.reset_time())
+        return self._mesh
+
+    @property
+    def is_convex(self):
+        """
+        :return: whether the mesh can be assumed to be convex
+        :rtype: bool
+        """
+        return False
+
+    @property
+    def needs_recompute_instantaneous(self):
+        """
+        whether the Body needs local quantities recomputed at each time, even
+        if needs_remesh == False (instantaneous local quantities will be recomputed
+        if needs_remesh=True, whether or not this is True)
+
+        this should be overridden by any subclass of Body
+        """
+        return False
+
+    @property
+    def needs_remesh(self):
+        """
+        whether the Body needs to be re-meshed (for any reason)
+
+        this should be overridden by any subclass of Body
+        """
+        return False
+
+
+    def _get_coords_by_index(self, coords_array, index):
+        """
+        where index can either by an integer or a list of integers (returns some of masses)
+        coords_array should be a single array (xs, ys, or zs)
+        """
+        if hasattr(index, '__iter__'):
+            # then we want the center-of-mass coordinates
+            # TODO: clean this up
+            return np.average([_value(coords_array[i]) for i in index],
+                              weights=[self._get_mass_by_index(i) for i in index])
+        else:
+            return coords_array[index]
+
+    def save_as_standard_mesh(self, protomesh):
+        """
+        TODO: add documentation
+        """
+        # TODO: allow this to take theta or separation
+        theta=0.0
+
+        self._standard_meshes[theta] = protomesh.copy()
+
+        # if theta==0.0:
+            # then this is when the object could be most inflated, so let's
+            # store the maximum distance to a triangle.  This is then used to
+            # conservatively and efficiently estimate whether an eclipse is
+            # possible at any given combination of positions
+            # mesh = self.get_standard_mesh(theta=0.0, scaled=True)
+
+            # self._max_r = np.sqrt(max([x**2+y**2+z**2 for x,y,z in mesh.centers]))
+
+    def has_standard_mesh(self):
+        """
+        whether a standard mesh is available
+        """
+        # TODO: allow this to take etheta and look to see if we have an existing
+        # standard close enough
+        theta = 0.0
+        return theta in self._standard_meshes.keys()
+
+    def get_standard_mesh(self, scaled=True):
+        """
+        TODO: add documentation
+        """
+        # TODO: allow this to take etheta and retreive a mesh at that true anomaly
+        theta = 0.0
+        protomesh = self._standard_meshes[theta] #.copy() # if theta in self._standard_meshes.keys() else self.mesh.copy()
+
+        if scaled:
+            # TODO: be careful about self._scale... we may want self._instantaneous_scale
+            return mesh.ScaledProtoMesh.from_proto(protomesh, self._scale)
+        else:
+            return protomesh.copy()
+
+        # return mesh
+
+    def reset(self, force_remesh=False, force_recompute_instantaneous=False):
+        if force_remesh:
+            logger.debug("{}.reset: forcing remesh and recompute_instantaneous for next iteration".format(self.component))
+        elif force_recompute_instantaneous:
+            logger.debug("{}.reset: forcing recompute_instantaneous for next iteration".format(self.component))
+
+        if self.needs_remesh or force_remesh:
+            self._mesh = None
+            self._standard_meshes = {}
+
+        if self.needs_recompute_instantaneous or self.needs_remesh or force_remesh or force_recompute_instantaneous:
+            self.inst_vals = {}
+            self._force_recompute_instantaneous_next_update_position = True
+
+    def reset_time(self, time, true_anom, elongan, eincl):
+        """
+        TODO: add documentation
+        """
+        self.true_anom = true_anom
+        self.elongan = elongan
+        self.eincl = eincl
+        self.time = time
+        self.populated_at_time = []
+
+        self.reset()
+
+        return
+
+    def _build_mesh(self, *args, **kwargs):
+        """
+        """
+        # return new_mesh_dict, scale
+        raise NotImplementedError("_build_mesh must be overridden by the subclass of Body")
+
+    def update_position(self, time,
+                        xs, ys, zs, vxs, vys, vzs,
+                        ethetas, elongans, eincls,
+                        ds=None, Fs=None,
+                        ignore_effects=False,
+                        component_com_x=None,
+                        **kwargs):
+        """
+        Update the position of the star into its orbit
+
+        :parameter float time: the current time
+        :parameter list xs: a list/array of x-positions of ALL COMPONENTS in the :class:`System`
+        :parameter list ys: a list/array of y-positions of ALL COMPONENTS in the :class:`System`
+        :parameter list zs: a list/array of z-positions of ALL COMPONENTS in the :class:`System`
+        :parameter list vxs: a list/array of x-velocities of ALL COMPONENTS in the :class:`System`
+        :parameter list vys: a list/array of y-velocities of ALL COMPONENTS in the :class:`System`
+        :parameter list vzs: a list/array of z-velocities of ALL COMPONENTS in the :class:`System`
+        :parameter list ethetas: a list/array of euler-thetas of ALL COMPONENTS in the :class:`System`
+        :parameter list elongans: a list/array of euler-longans of ALL COMPONENTS in the :class:`System`
+        :parameter list eincls: a list/array of euler-incls of ALL COMPONENTS in the :class:`System`
+        :parameter list ds: (optional) a list/array of instantaneous distances of ALL COMPONENTS in the :class:`System`
+        :parameter list Fs: (optional) a list/array of instantaneous syncpars of ALL COMPONENTS in the :class:`System`
+        """
+        logger.debug("{}.update_position ignore_effects={}".format(self.component, ignore_effects))
+        self.reset_time(time, ethetas[self.ind_self], elongans[self.ind_self], eincls[self.ind_self])
+
+        #-- Get current position/euler information
+        # TODO: get rid of this ugly _value stuff
+        pos = (_value(xs[self.ind_self]), _value(ys[self.ind_self]), _value(zs[self.ind_self]))
+        vel = (_value(vxs[self.ind_self_vel]), _value(vys[self.ind_self_vel]), _value(vzs[self.ind_self_vel]))
+        euler = (_value(ethetas[self.ind_self]), _value(elongans[self.ind_self]), _value(eincls[self.ind_self]))
+        euler_vel = (_value(ethetas[self.ind_self_vel]), _value(elongans[self.ind_self_vel]), _value(eincls[self.ind_self_vel]))
+
+        # TODO: eventually pass etheta to has_standard_mesh
+        # TODO: implement reprojection as an option based on a nearby standard?
+        if self.needs_remesh or not self.has_standard_mesh():
+            logger.debug("{}.update_position: remeshing at t={}".format(self.component, time))
+            # track whether we did the remesh or not, so we know if we should
+            # compute local quantities if not otherwise necessary
+            did_remesh = True
+
+            # TODO: allow time dependence on d and F from dynamics
+            # d = _value(ds[self.ind_self])
+            # F = _value(Fs[self.ind_self])
+
+            new_mesh_dict, scale = self._build_mesh(mesh_method=self.mesh_method)
+            if self.mesh_method != 'wd':
+                new_mesh_dict = self._offset_mesh(new_mesh_dict)
+
+                # We only need the gradients where we'll compute local
+                # quantities which, for a marching mesh, is at the vertices.
+                new_mesh_dict['normgrads'] = new_mesh_dict.pop('vnormgrads', np.array([]))
+
+            # And lastly, let's fill the velocities column - with zeros
+            # at each of the vertices
+            new_mesh_dict['velocities'] = np.zeros(new_mesh_dict['vertices'].shape if self.mesh_method != 'wd' else new_mesh_dict['centers'].shape)
+
+            new_mesh_dict['tareas'] = np.array([])
+
+
+            # TODO: need to be very careful about self.sma vs self._scale - maybe need to make a self._instantaneous_scale???
+            # self._scale = scale
+
+            if not self.has_standard_mesh():
+                # then we only computed this because we didn't already have a
+                # standard_mesh... so let's save this for future use
+                # TODO: eventually pass etheta to save_as_standard_mesh
+                protomesh = mesh.ProtoMesh(**new_mesh_dict)
+                self.save_as_standard_mesh(protomesh)
+
+            # Here we'll build a scaledprotomesh directly from the newly
+            # marched mesh
+            # NOTE that we're using scale from the new
+            # mesh rather than self._scale since the instantaneous separation
+            # has likely changed since periastron
+            scaledprotomesh = mesh.ScaledProtoMesh(scale=scale, **new_mesh_dict)
+
+        else:
+            logger.debug("{}.update_position: accessing standard mesh at t={}".format(self.component, self.time))
+            # track whether we did the remesh or not, so we know if we should
+            # compute local quantities if not otherwise necessary
+            did_remesh = False
+
+            # We still need to go through scaledprotomesh instead of directly
+            # to mesh since features may want to process the body-centric
+            # coordinates before placing in orbit
+
+            # TODO: eventually pass etheta to get_standard_mesh
+            scaledprotomesh = self.get_standard_mesh(scaled=True)
+            # TODO: can we avoid an extra copy here?
+
+
+        if not ignore_effects and len(self.features):
+            logger.debug("{}.update_position: processing features at t={}".format(self.component, self.time))
+            # First allow features to edit the coords_for_computations (pvertices).
+            # Changes here WILL affect future computations for logg, teff,
+            # intensities, etc.  Note that these WILL NOT affect the
+            # coords_for_observations automatically - those should probably be
+            # perturbed as well, unless there is a good reason not to.
+            for feature in self.features:
+                # NOTE: these are ALWAYS done on the protomesh
+                coords_for_observations = feature.process_coords_for_computations(scaledprotomesh.coords_for_computations, s=self.polar_direction_xyz, t=self.time)
+                if scaledprotomesh._compute_at_vertices:
+                    scaledprotomesh.update_columns(pvertices=coords_for_observations)
+
+                else:
+                    scaledprotomesh.update_columns(centers=coords_for_observations)
+                    raise NotImplementedError("areas are not updated for changed mesh")
+
+
+            for feature in self.features:
+                coords_for_observations = feature.process_coords_for_observations(scaledprotomesh.coords_for_computations, scaledprotomesh.coords_for_observations, s=self.polar_direction_xyz, t=self.time)
+                if scaledprotomesh._compute_at_vertices:
+                    scaledprotomesh.update_columns(vertices=coords_for_observations)
+
+                    # TODO [DONE?]: centers either need to be supported or we need to report
+                    # vertices in the frontend as x, y, z instead of centers
+
+                    updated_props = libphoebe.mesh_properties(scaledprotomesh.vertices,
+                                                              scaledprotomesh.triangles,
+                                                              tnormals=True,
+                                                              areas=True)
+
+                    scaledprotomesh.update_columns(**updated_props)
+
+                else:
+                    scaledprotomesh.update_columns(centers=coords_for_observations)
+                    raise NotImplementedError("areas are not updated for changed mesh")
+
+
+        # TODO NOW [OPTIMIZE]: get rid of the deepcopy here - but without it the
+        # mesh velocities build-up and do terrible things.  It may be possible
+        # to just clear the velocities in get_standard_mesh()?
+        logger.debug("{}.update_position: placing in orbit, Mesh.from_scaledproto at t={}".format(self.component, self.time))
+        self._mesh = mesh.Mesh.from_scaledproto(scaledprotomesh.copy(),
+                                                pos, vel, euler, euler_vel,
+                                                self.polar_direction_xyz*self.freq_rot*self._scale,
+                                                component_com_x)
+
+
+        # Lastly, we'll recompute physical quantities (not observables) if
+        # needed for this time-step.
+        # TODO [DONE?]: make sure features smartly trigger needs_recompute_instantaneous
+        # TODO: get rid of the or True here... the problem is that we're saving the standard mesh before filling local quantities
+        if self.needs_recompute_instantaneous or did_remesh or self._force_recompute_instantaneous_next_update_position:
+            logger.debug("{}.update_position: calling compute_local_quantities at t={} ignore_effects={}".format(self.component, self.time, ignore_effects))
+            self.compute_local_quantities(ignore_effects)
+            self._force_recompute_instantaneous_next_update_position = False
+
+        return
+
+    def compute_local_quantities(self, xs, ys, zs, ignore_effects=False, **kwargs):
+        """
+        """
+        raise NotImplementedError("compute_local_quantities needs to be overridden by the subclass of Star")
+
+    def populate_observable(self, time, kind, dataset, ignore_effects=False, force_recompute=False, **kwargs):
+        """
+        TODO: add documentation
+        """
+
+        if kind in ['mesh', 'orb']:
+            return
+
+        if time==self.time and dataset in self.populated_at_time and 'pblum' not in kind and not force_recompute:
+            # then we've already computed the needed columns
+
+            # TODO: handle the case of intensities already computed by
+            # /different/ dataset (ie RVs computed first and filling intensities
+            # and then lc requesting intensities with SAME passband/atm)
+            return
+
+        new_mesh_cols = getattr(self, '_populate_{}'.format(kind.lower()))(dataset, ignore_effects=ignore_effects, **kwargs)
+
+        for key, col in new_mesh_cols.items():
+
+            self.mesh.update_columns_dict({'{}:{}'.format(key, dataset): col})
+
+        self.populated_at_time.append(dataset)
+
 class Star(Body):
     def __init__(self, component, comp_no, ind_self, ind_sibling, masses, ecc, incl,
                  long_an, t0, do_mesh_offset, mesh_init_phi,

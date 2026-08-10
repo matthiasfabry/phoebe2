@@ -49,6 +49,7 @@
 #include "reflection.h"            // Dealing with reflection effects/radiosity problem
 #include "redistribution.h"        // Dealing with reflection-redistribution problem
 #include "horizon.h"               // Calculation of horizons
+#include "disks.h"                 // construction of disks
 
 #include "gen_roche.h"             // support for generalized Roche lobes
 #include "contact.h"               // support for contact case of Roche lobes
@@ -5564,6 +5565,238 @@ static PyObject *sphere_marching_mesh([[maybe_unused]] PyObject *self, PyObject 
     PyDict_SetItemStringStealRef(results, "cnormgrads", PyArray_FromVector(*GatC));
     delete GatC;
   }
+
+  return results;
+}
+
+static PyObject *disk_mesh([[maybe_unused]] PyObject *self, PyObject *args, PyObject *keywds) {
+
+ auto fname = "disk_mesh"_s;
+
+  //
+  // Reading arguments
+  //
+
+ char *kwlist[] = {
+    (char*)"r1",
+    (char*)"r2",
+    (char*)"height",
+    (char*)"max_triangles",
+    // (char*)"full",
+    (char*)"vertices",
+    // (char*)"vnormals",
+    // (char*)"vnormgrads",
+    (char*)"triangles",
+    // (char*)"tnormals",
+    // (char*)"centers",
+    // (char*)"cnormals",
+    // (char*)"cnormgrads",
+    // (char*)"areas",
+    // (char*)"area",
+    // (char*)"volume",
+    NULL};
+  
+  double height, r1, r2;
+  int max_triangles = 10000000; // 10^7
+
+
+  bool
+  //   b_full = true,
+    b_vertices = false,
+  //   b_vnormals = false,
+  //   b_vnormgrads = false,
+    b_triangles = false;
+  //   b_tnormals = false,
+  //   b_centers = false,
+  //   b_cnormals = false,
+  //   b_cnormgrads = false,
+  //   b_areas = false,
+  //   b_area = false,
+  //   b_volume = false;
+
+  // http://wingware.com/psupport/python-manual/2.3/api/boolObjects.html
+  PyObject
+  //   *o_full = 0,
+    *o_vertices = 0,
+  //   *o_vnormals = 0,
+  //   *o_vnormgrads = 0,
+    *o_triangles = 0;
+  //   *o_tnormals = 0,
+  //   *o_centers = 0,
+  //   *o_cnormals = 0,
+  //   *o_cnormgrads = 0,
+  //   *o_areas = 0,
+  //   *o_area = 0,
+  //   *o_volume = 0;
+
+  if (!PyArg_ParseTupleAndKeywords(
+      args, keywds,  "ddd|iO!O!", kwlist,
+      &r1, &r2, &height,                 // neccesary
+      &max_triangles,                   // optional ...
+      // &PyBool_Type, &o_full,
+      &PyBool_Type, &o_vertices,
+      // &PyBool_Type, &o_vnormals,
+      // &PyBool_Type, &o_vnormgrads,
+      &PyBool_Type, &o_triangles
+      // &PyBool_Type, &o_tnormals,
+      // &PyBool_Type, &o_centers,
+      // &PyBool_Type, &o_cnormals,
+      // &PyBool_Type, &o_cnormgrads,
+      // &PyBool_Type, &o_areas,
+      // &PyBool_Type, &o_area,
+      // &PyBool_Type, &o_volume
+    )) {
+    raise_exception(fname + "::Problem reading arguments");
+    return NULL;
+  }
+
+  // if (o_full) b_full = PyObject_IsTrue(o_full);
+  if (o_vertices) b_vertices = PyObject_IsTrue(o_vertices);
+  // if (o_vnormals) b_vnormals = PyObject_IsTrue(o_vnormals);
+  // if (o_vnormgrads) b_vnormgrads = PyObject_IsTrue(o_vnormgrads);
+  if (o_triangles) b_triangles = PyObject_IsTrue(o_triangles);
+  // if (o_tnormals)  b_tnormals = PyObject_IsTrue(o_tnormals);
+  // if (o_centers) b_centers = PyObject_IsTrue(o_centers);
+  // if (o_cnormals) b_cnormals = PyObject_IsTrue(o_cnormals);
+  // if (o_cnormgrads) b_cnormgrads = PyObject_IsTrue(o_cnormgrads);
+  // if (o_areas) b_areas = PyObject_IsTrue(o_areas);
+  // if (o_area) b_area = PyObject_IsTrue(o_area);
+  // if (o_volume) b_volume = PyObject_IsTrue(o_volume);
+
+  //
+  // Storing results in dictioonary
+  // https://docs.python.org/2/c-api/dict.html
+  //
+  PyObject *results = PyDict_New();
+
+  
+  std::vector<T3Dpoint<double>> V, NatV;
+  std::vector<T3Dpoint<int>> Tr;
+  std::vector<double> *GatV = 0;
+  
+  build_disk_mesh(r1, r2, height, max_triangles, V, NatV, Tr, GatV);
+
+  // //
+  // // Calculte the mesh properties
+  // //
+  // int vertex_choice = 0;
+
+  // double
+  //   area, volume,
+  //   *p_area = 0,
+  //   *p_volume = 0;
+
+  // std::vector<double> *A = 0;
+
+  // std::vector<T3Dpoint<double>> *NatT = 0;
+
+  // if (b_areas) A = new std::vector<double>;
+
+  // if (b_area) p_area = &area;
+
+  // if (b_tnormals) NatT = new std::vector<T3Dpoint<double>>;
+
+  // if (b_volume) p_volume = &volume;
+
+  // mesh_attributes(V, NatV, Tr, A, NatT, p_area, p_volume, vertex_choice, true);
+
+  // //
+  // // Calculte the central points
+  // //
+
+  // std::vector<double> *GatC = 0;
+
+  // std::vector<T3Dpoint<double>> *C = 0, *NatC = 0;
+
+  // if (b_centers || b_cnormals) {
+
+  //   std::vector<T3Dpoint<double>>::iterator itC, itNatC;
+
+  //   if (b_centers) {
+  //     C = new std::vector<T3Dpoint<double>> (Tr.size());
+  //     itC = C->begin();
+  //   }
+
+  //   if (b_cnormals){
+  //     NatC = new std::vector<T3Dpoint<double>> (Tr.size());
+  //     itNatC = NatC->begin();
+  //   }
+
+  //   double f, t, r[3];
+
+  //   for (auto tr : Tr) {
+
+  //     f = 0;
+  //     for (int i = 0; i < 3; ++i) {
+  //       r[i] = t = V[tr[0]][i] +  V[tr[1]][i] + V[tr[2]][i];
+  //       f += t*t;
+  //     }
+
+  //     f = 1/std::sqrt(f);
+
+  //     for (int i = 0; i < 3; ++i) r[i] *= f;
+
+  //     // C
+  //     if (b_centers) {
+  //       for (int i = 0; i < 3; ++i) (*itC)[i] = R*r[i];
+  //       ++itC;
+  //     }
+
+  //     // Cnorms
+  //     if (b_cnormals) {
+  //       for (int i = 0; i < 3; ++i) (*itNatC)[i] = r[i];
+  //       ++itNatC;
+  //     }
+  //   }
+  // }
+
+  // if (b_cnormgrads)
+  //   GatC = new std::vector<double>(V.size(), Omega0*Omega0);
+
+  if (b_vertices)
+    PyDict_SetItemStringStealRef(results, "vertices", PyArray_From3DPointVector(V));
+
+  // if (b_vnormals)
+  //   PyDict_SetItemStringStealRef(results, "vnormals", PyArray_From3DPointVector(NatV));
+
+  // if (b_vnormgrads) {
+  //   PyDict_SetItemStringStealRef(results, "vnormgrads", PyArray_FromVector(*GatV));
+  //   delete GatV;
+  // }
+
+  if (b_triangles)
+    PyDict_SetItemStringStealRef(results, "triangles", PyArray_From3DPointVector(Tr));
+
+  // if (b_areas) {
+  //   PyDict_SetItemStringStealRef(results, "areas", PyArray_FromVector(*A));
+  //   delete A;
+  // }
+
+  // if (b_area)
+  //   PyDict_SetItemStringStealRef(results, "area", PyFloat_FromDouble(area));
+
+  // if (b_tnormals) {
+  //   PyDict_SetItemStringStealRef(results, "tnormals", PyArray_From3DPointVector(*NatT));
+  //   delete NatT;
+  // }
+
+  // if (b_volume)
+  //   PyDict_SetItemStringStealRef(results, "volume", PyFloat_FromDouble(volume));
+
+  // if (b_centers) {
+  //   PyDict_SetItemStringStealRef(results, "centers", PyArray_From3DPointVector(*C));
+  //   delete C;
+  // }
+
+  // if (b_cnormals) {
+  //   PyDict_SetItemStringStealRef(results, "cnormals", PyArray_From3DPointVector(*NatC));
+  //   delete NatC;
+  // }
+
+  // if (b_cnormgrads) {
+  //   PyDict_SetItemStringStealRef(results, "cnormgrads", PyArray_FromVector(*GatC));
+  //   delete GatC;
+  // }
 
   return results;
 }
@@ -11734,6 +11967,11 @@ static PyMethodDef Methods[] = {
     " misaligned angular velocity vectors at given point [x,y,z] for given "
     " values of q, F, d and misalignment(theta or direction)"},
 
+  { "disk_mesh",
+    O2F disk_mesh,
+    METH_VARARGS|METH_KEYWORDS,
+    "Calculate the triangular mesh of a disk with given inner and outer radii "
+    "and height."},
 // --------------------------------------------------------------------
 
   { "roche_gradOmega_only",

@@ -1,5 +1,6 @@
 /build
 /dist
+/.idea
 .vscode
 /phoebe/atmospheres/tables/scripts
 /phoebe/atmospheres/tables/ck2004
