@@ -5569,234 +5569,281 @@ static PyObject *sphere_marching_mesh([[maybe_unused]] PyObject *self, PyObject 
   return results;
 }
 
-static PyObject *disk_mesh([[maybe_unused]] PyObject *self, PyObject *args, PyObject *keywds) {
+/*
+  Build a triangulated mesh of a simple axisymmetric disk (annulus of
+  inner_radius, outer_radius swept to height, connected top+bottom faces
+  and inner+outer limbs), matching the calling convention and output
+  dictionary style of the Roche/rotstar/sphere *_marching_mesh functions
+  above.
 
- auto fname = "disk_mesh"_s;
+  Unlike those, there's no implicit potential and no Newton-Raphson
+  projection anywhere -- the disk's geometry is fully analytic (see
+  disk_mesh.h), so mesh generation cannot fail with "too many triangles"
+  or "projections failing" the way the Roche meshers can. There's also no
+  vnormgrads/cnormgrads output, since there's no potential gradient for a
+  disk and PHOEBE's Disk body doesn't compute local surface quantities
+  (loggs/teffs/etc) the way Star does.
 
-  //
-  // Reading arguments
-  //
+  Python signature:
+    disk_mesh(inner_radius, outer_radius, height, max_triangles,
+              vertices=False, vnormals=False, triangles=False,
+              tnormals=False, centers=False, cnormals=False,
+              areas=False, area=False, volume=False)
+*/
+static PyObject *disk_mesh([[maybe_unused]] PyObject *self, PyObject *args, PyObject *keywds)
+{
 
- char *kwlist[] = {
-    (char*)"r1",
-    (char*)"r2",
-    (char*)"height",
-    (char*)"max_triangles",
-    // (char*)"full",
-    (char*)"vertices",
-    // (char*)"vnormals",
-    // (char*)"vnormgrads",
-    (char*)"triangles",
-    // (char*)"tnormals",
-    // (char*)"centers",
-    // (char*)"cnormals",
-    // (char*)"cnormgrads",
-    // (char*)"areas",
-    // (char*)"area",
-    // (char*)"volume",
-    NULL};
-  
-  double height, r1, r2;
-  int max_triangles = 10000000; // 10^7
+  auto fname = "disk_mesh"_s;
 
+  if (verbosity_level >= 4)
+    report_stream << fname << "::START" << std::endl;
+
+  char *kwlist[] = {
+      (char *)"inner_radius",
+      (char *)"outer_radius",
+      (char *)"height",
+      (char *)"max_triangles",
+      (char *)"vertices",
+      (char *)"vnormals",
+      (char *)"triangles",
+      (char *)"tnormals",
+      (char *)"centers",
+      (char *)"cnormals",
+      (char *)"areas",
+      (char *)"area",
+      (char *)"volume",
+      NULL};
+
+  double inner_radius, outer_radius, height;
+  int max_triangles;
 
   bool
-  //   b_full = true,
-    b_vertices = false,
-  //   b_vnormals = false,
-  //   b_vnormgrads = false,
-    b_triangles = false;
-  //   b_tnormals = false,
-  //   b_centers = false,
-  //   b_cnormals = false,
-  //   b_cnormgrads = false,
-  //   b_areas = false,
-  //   b_area = false,
-  //   b_volume = false;
+      b_vertices = false,
+      b_vnormals = false,
+      b_triangles = false,
+      b_tnormals = false,
+      b_centers = false,
+      b_cnormals = false,
+      b_areas = false,
+      b_area = false,
+      b_volume = false;
 
-  // http://wingware.com/psupport/python-manual/2.3/api/boolObjects.html
   PyObject
-  //   *o_full = 0,
-    *o_vertices = 0,
-  //   *o_vnormals = 0,
-  //   *o_vnormgrads = 0,
-    *o_triangles = 0;
-  //   *o_tnormals = 0,
-  //   *o_centers = 0,
-  //   *o_cnormals = 0,
-  //   *o_cnormgrads = 0,
-  //   *o_areas = 0,
-  //   *o_area = 0,
-  //   *o_volume = 0;
+      *o_vertices = 0,
+      *o_vnormals = 0,
+      *o_triangles = 0,
+      *o_tnormals = 0,
+      *o_centers = 0,
+      *o_cnormals = 0,
+      *o_areas = 0,
+      *o_area = 0,
+      *o_volume = 0;
 
   if (!PyArg_ParseTupleAndKeywords(
-      args, keywds,  "ddd|iO!O!", kwlist,
-      &r1, &r2, &height,                 // neccesary
-      &max_triangles,                   // optional ...
-      // &PyBool_Type, &o_full,
-      &PyBool_Type, &o_vertices,
-      // &PyBool_Type, &o_vnormals,
-      // &PyBool_Type, &o_vnormgrads,
-      &PyBool_Type, &o_triangles
-      // &PyBool_Type, &o_tnormals,
-      // &PyBool_Type, &o_centers,
-      // &PyBool_Type, &o_cnormals,
-      // &PyBool_Type, &o_cnormgrads,
-      // &PyBool_Type, &o_areas,
-      // &PyBool_Type, &o_area,
-      // &PyBool_Type, &o_volume
-    )) {
+          args, keywds, "dddi|O!O!O!O!O!O!O!O!O!", kwlist,
+          &inner_radius, &outer_radius, &height, &max_triangles,
+          &PyBool_Type, &o_vertices,
+          &PyBool_Type, &o_vnormals,
+          &PyBool_Type, &o_triangles,
+          &PyBool_Type, &o_tnormals,
+          &PyBool_Type, &o_centers,
+          &PyBool_Type, &o_cnormals,
+          &PyBool_Type, &o_areas,
+          &PyBool_Type, &o_area,
+          &PyBool_Type, &o_volume))
+  {
+
     raise_exception(fname + "::Problem reading arguments");
     return NULL;
   }
 
-  // if (o_full) b_full = PyObject_IsTrue(o_full);
-  if (o_vertices) b_vertices = PyObject_IsTrue(o_vertices);
-  // if (o_vnormals) b_vnormals = PyObject_IsTrue(o_vnormals);
-  // if (o_vnormgrads) b_vnormgrads = PyObject_IsTrue(o_vnormgrads);
-  if (o_triangles) b_triangles = PyObject_IsTrue(o_triangles);
-  // if (o_tnormals)  b_tnormals = PyObject_IsTrue(o_tnormals);
-  // if (o_centers) b_centers = PyObject_IsTrue(o_centers);
-  // if (o_cnormals) b_cnormals = PyObject_IsTrue(o_cnormals);
-  // if (o_cnormgrads) b_cnormgrads = PyObject_IsTrue(o_cnormgrads);
-  // if (o_areas) b_areas = PyObject_IsTrue(o_areas);
-  // if (o_area) b_area = PyObject_IsTrue(o_area);
-  // if (o_volume) b_volume = PyObject_IsTrue(o_volume);
+  if (o_vertices)
+    b_vertices = PyObject_IsTrue(o_vertices);
+  if (o_vnormals)
+    b_vnormals = PyObject_IsTrue(o_vnormals);
+  if (o_triangles)
+    b_triangles = PyObject_IsTrue(o_triangles);
+  if (o_tnormals)
+    b_tnormals = PyObject_IsTrue(o_tnormals);
+  if (o_centers)
+    b_centers = PyObject_IsTrue(o_centers);
+  if (o_cnormals)
+    b_cnormals = PyObject_IsTrue(o_cnormals);
+  if (o_areas)
+    b_areas = PyObject_IsTrue(o_areas);
+  if (o_area)
+    b_area = PyObject_IsTrue(o_area);
+  if (o_volume)
+    b_volume = PyObject_IsTrue(o_volume);
+
+  if (!(inner_radius > 0 && outer_radius > inner_radius && height > 0 && max_triangles > 0))
+  {
+    raise_exception(fname + "::Invalid disk parameters: need 0 < inner_radius < outer_radius, height > 0, max_triangles > 0");
+    return NULL;
+  }
+
+  if (verbosity_level >= 4)
+    report_stream << fname
+                  << "::inner_radius=" << inner_radius
+                  << " outer_radius=" << outer_radius
+                  << " height=" << height
+                  << " max_triangles=" << max_triangles << '\n';
 
   //
-  // Storing results in dictioonary
-  // https://docs.python.org/2/c-api/dict.html
+  // Build the disk mesh (analytic surface of revolution -- see disk_mesh.h)
+  //
+  std::vector<T3Dpoint<double>> V, NatV;
+  std::vector<T3Dpoint<int>> Tr;
+
+  Tdisk_mesh_equilateral<double> disk(inner_radius, outer_radius, height);
+  disk.make_mesh(max_triangles, V, NatV, Tr);
+
+  if (verbosity_level >= 4)
+    report_stream << fname << "::V.size=" << V.size() << " Tr.size=" << Tr.size() << '\n';
+
+  //
+  // Storing results in dictionary
   //
   PyObject *results = PyDict_New();
 
-  
-  std::vector<T3Dpoint<double>> V, NatV;
-  std::vector<T3Dpoint<int>> Tr;
-  std::vector<double> *GatV = 0;
-  
-  build_disk_mesh(r1, r2, height, max_triangles, V, NatV, Tr, GatV);
+  //
+  // Per-triangle areas/normals and totals. NatV is used as the
+  // orientation reference for each triangle -- this also fixes Tr's
+  // winding order in place (reorientate=true) if it was ever
+  // inconsistent, same as the Roche meshers above.
+  //
+  double area, volume, *p_area = 0, *p_volume = 0;
 
-  // //
-  // // Calculte the mesh properties
-  // //
-  // int vertex_choice = 0;
+  std::vector<double> *A = 0;
+  std::vector<T3Dpoint<double>> *NatT = 0;
 
-  // double
-  //   area, volume,
-  //   *p_area = 0,
-  //   *p_volume = 0;
+  if (b_areas)
+    A = new std::vector<double>;
+  if (b_area)
+    p_area = &area;
+  if (b_volume)
+    p_volume = &volume;
+  if (b_tnormals || b_centers || b_cnormals)
+    NatT = new std::vector<T3Dpoint<double>>;
 
-  // std::vector<double> *A = 0;
+  mesh_attributes(V, NatV, Tr, A, NatT, p_area, p_volume, 0, true);
 
-  // std::vector<T3Dpoint<double>> *NatT = 0;
+  //
+  // Centers: triangle barycenters, analytically corrected back onto the
+  // disk surface.
+  //
+  // Top/bottom faces are exactly planar, so the raw barycenter is already
+  // exact there. Wall triangles connect points sampled on a circle with a
+  // flat chord, so the raw barycenter falls slightly inside the true
+  // radius; correct by projecting (x,y) radially back out. A triangle is
+  // classified wall vs. face from its tnormal's z-component (face:
+  // |nz| ~ 1, wall: nz ~ 0); the corrected radius/sign for walls is read
+  // off from which side of the mid-radius the raw barycenter falls on.
+  //
+  std::vector<T3Dpoint<double>> *C = 0, *NatC = 0;
 
-  // if (b_areas) A = new std::vector<double>;
+  if (b_centers || b_cnormals)
+  {
 
-  // if (b_area) p_area = &area;
+    C = new std::vector<T3Dpoint<double>>;
+    C->reserve(Tr.size());
 
-  // if (b_tnormals) NatT = new std::vector<T3Dpoint<double>>;
+    if (b_cnormals)
+    {
+      NatC = new std::vector<T3Dpoint<double>>;
+      NatC->reserve(Tr.size());
+    }
 
-  // if (b_volume) p_volume = &volume;
+    double mid_r = 0.5 * (inner_radius + outer_radius);
 
-  // mesh_attributes(V, NatV, Tr, A, NatT, p_area, p_volume, vertex_choice, true);
+    int i = 0;
+    for (auto &&t : Tr)
+    {
 
-  // //
-  // // Calculte the central points
-  // //
+      double c[3] = {0, 0, 0};
+      for (int k = 0; k < 3; ++k)
+      {
+        double *p = V[t[k]].data;
+        for (int j = 0; j < 3; ++j)
+          c[j] += p[j] / 3;
+      }
 
-  // std::vector<double> *GatC = 0;
+      bool is_wall = std::abs((*NatT)[i][2]) < 0.5;
 
-  // std::vector<T3Dpoint<double>> *C = 0, *NatC = 0;
+      double n[3];
 
-  // if (b_centers || b_cnormals) {
+      if (is_wall)
+      {
+        double r = std::hypot(c[0], c[1]);
+        double target_r = (r < mid_r) ? inner_radius : outer_radius;
+        double fac = target_r / r;
+        c[0] *= fac;
+        c[1] *= fac;
 
-  //   std::vector<T3Dpoint<double>>::iterator itC, itNatC;
+        double sign = (target_r == outer_radius) ? 1 : -1;
+        n[0] = sign * c[0] / target_r;
+        n[1] = sign * c[1] / target_r;
+        n[2] = 0;
+      }
+      else
+      {
+        n[0] = n[1] = 0;
+        n[2] = (c[2] > 0) ? 1 : -1;
+      }
 
-  //   if (b_centers) {
-  //     C = new std::vector<T3Dpoint<double>> (Tr.size());
-  //     itC = C->begin();
-  //   }
+      C->emplace_back(c);
+      if (NatC)
+        NatC->emplace_back(n);
 
-  //   if (b_cnormals){
-  //     NatC = new std::vector<T3Dpoint<double>> (Tr.size());
-  //     itNatC = NatC->begin();
-  //   }
+      ++i;
+    }
+  }
 
-  //   double f, t, r[3];
-
-  //   for (auto tr : Tr) {
-
-  //     f = 0;
-  //     for (int i = 0; i < 3; ++i) {
-  //       r[i] = t = V[tr[0]][i] +  V[tr[1]][i] + V[tr[2]][i];
-  //       f += t*t;
-  //     }
-
-  //     f = 1/std::sqrt(f);
-
-  //     for (int i = 0; i < 3; ++i) r[i] *= f;
-
-  //     // C
-  //     if (b_centers) {
-  //       for (int i = 0; i < 3; ++i) (*itC)[i] = R*r[i];
-  //       ++itC;
-  //     }
-
-  //     // Cnorms
-  //     if (b_cnormals) {
-  //       for (int i = 0; i < 3; ++i) (*itNatC)[i] = r[i];
-  //       ++itNatC;
-  //     }
-  //   }
-  // }
-
-  // if (b_cnormgrads)
-  //   GatC = new std::vector<double>(V.size(), Omega0*Omega0);
+  //
+  // Fill the results dictionary
+  //
 
   if (b_vertices)
     PyDict_SetItemStringStealRef(results, "vertices", PyArray_From3DPointVector(V));
 
-  // if (b_vnormals)
-  //   PyDict_SetItemStringStealRef(results, "vnormals", PyArray_From3DPointVector(NatV));
-
-  // if (b_vnormgrads) {
-  //   PyDict_SetItemStringStealRef(results, "vnormgrads", PyArray_FromVector(*GatV));
-  //   delete GatV;
-  // }
+  if (b_vnormals)
+    PyDict_SetItemStringStealRef(results, "vnormals", PyArray_From3DPointVector(NatV));
 
   if (b_triangles)
     PyDict_SetItemStringStealRef(results, "triangles", PyArray_From3DPointVector(Tr));
 
-  // if (b_areas) {
-  //   PyDict_SetItemStringStealRef(results, "areas", PyArray_FromVector(*A));
-  //   delete A;
-  // }
+  if (b_areas)
+  {
+    PyDict_SetItemStringStealRef(results, "areas", PyArray_FromVector(*A));
+    delete A;
+  }
 
-  // if (b_area)
-  //   PyDict_SetItemStringStealRef(results, "area", PyFloat_FromDouble(area));
+  if (b_area)
+    PyDict_SetItemStringStealRef(results, "area", PyFloat_FromDouble(area));
 
-  // if (b_tnormals) {
-  //   PyDict_SetItemStringStealRef(results, "tnormals", PyArray_From3DPointVector(*NatT));
-  //   delete NatT;
-  // }
+  if (b_volume)
+    PyDict_SetItemStringStealRef(results, "volume", PyFloat_FromDouble(volume));
 
-  // if (b_volume)
-  //   PyDict_SetItemStringStealRef(results, "volume", PyFloat_FromDouble(volume));
+  if (b_tnormals)
+    PyDict_SetItemStringStealRef(results, "tnormals", PyArray_From3DPointVector(*NatT));
 
-  // if (b_centers) {
-  //   PyDict_SetItemStringStealRef(results, "centers", PyArray_From3DPointVector(*C));
-  //   delete C;
-  // }
+  if (NatT)
+    delete NatT;
 
-  // if (b_cnormals) {
-  //   PyDict_SetItemStringStealRef(results, "cnormals", PyArray_From3DPointVector(*NatC));
-  //   delete NatC;
-  // }
+  if (b_centers)
+    PyDict_SetItemStringStealRef(results, "centers", PyArray_From3DPointVector(*C));
 
-  // if (b_cnormgrads) {
-  //   PyDict_SetItemStringStealRef(results, "cnormgrads", PyArray_FromVector(*GatC));
-  //   delete GatC;
-  // }
+  if (C)
+    delete C;
+
+  if (b_cnormals)
+    PyDict_SetItemStringStealRef(results, "cnormals", PyArray_From3DPointVector(*NatC));
+
+  if (NatC)
+    delete NatC;
+
+  if (verbosity_level >= 4)
+    report_stream << fname << "::END" << std::endl;
 
   return results;
 }
