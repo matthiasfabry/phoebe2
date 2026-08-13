@@ -181,7 +181,7 @@ _forbidden_labels += ['bol']
 
 # forbid all kinds
 _forbidden_labels += ['lc', 'rv', 'lp', 'sp', 'orb', 'mesh']
-_forbidden_labels += ['star', 'orbit', 'envelope']
+_forbidden_labels += ['star', 'orbit', 'envelope', 'disk']
 _forbidden_labels += ['spot', 'pulsation']
 _forbidden_labels += ['phoebe', 'legacy', 'jktebop', 'ellc']
 
@@ -209,7 +209,8 @@ _forbidden_labels += ['requiv', 'requiv_max', 'requiv_min', 'teff', 'abun', 'log
                       'mass', 'dpdt', 'per0',
                       'dperdt', 'ecc', 'deccdt', 't0_perpass', 't0_supconj',
                       't0_ref', 'mean_anom', 'q', 'sma', 'asini', 'ecosw', 'esinw',
-                      'teffratio', 'requivratio', 'requivsumfrac'
+                      'teffratio', 'requivratio', 'requivsumfrac',
+                      'r_inner', 'r_outer', 'r_inner_min', 'height'
                       ]
 
 # from dataset:
@@ -10717,6 +10718,15 @@ class HierarchyParameter(StringParameter):
         # now search for indices of star and take the next entry from this flat list
         return [l[i+1] for i,s in enumerate(l) if s=='star']
 
+    def get_disks(self):
+        """
+        Return a list of all components with kind='disk' in the
+        <phoebe.parameters.HierarchyParameter>.
+        """
+        l = re.findall(r"[\w']+", self.get_value())
+        # now search for indices of disk and take the next entry from this flat list
+        return [l[i+1] for i,s in enumerate(l) if s=='disk']
+
     def get_envelopes(self):
         """
         Return a list of all components with kind='envelope' in the
@@ -10772,7 +10782,7 @@ class HierarchyParameter(StringParameter):
     def _compute_meshables(self):
         l = re.findall(r"[\w']+", self.get_value())
         # now search for indices of star and take the next entry from this flat list
-        meshables = [l[i+1] for i,s in enumerate(l) if s in ['star', 'envelope']]
+        meshables = [l[i+1] for i,s in enumerate(l) if s in ['star', 'envelope', 'disk']]
 
         # now we want to remove any star which has a sibling envelope
         has_sibling_envelope = []
@@ -11020,48 +11030,32 @@ class HierarchyParameter(StringParameter):
 
         return stars
 
-
     def get_children_of(self, component, kind=None):
         """
         Get the children of a component in the
         <phoebe.parameters.HierarchyParameter>.
-
-        To access the HierarchyParameter from the Bundle, see
-         <phoebe.frontend.bundle.Bundle.get_hierarchy>.
-
-        See also:
-        * <phoebe.parameters.HierarchyParameter.get_parent_of>
-        * <phoebe.parameters.HierarchyParameter.get_sibling_of>
-        * <phoebe.parameters.HierarchyParameter.get_siblings_of>
-        * <phoebe.parameters.HierarchyParameter.get_envelope_of>
-        * <phoebe.parameters.HierarchyParameter.get_stars_of_sibling_of>
-        * <phoebe.parameters.HierarchyParameter.get_stars_of_children_of>
-        * <phoebe.parameters.HierarchyParameter.get_child_of>
-
-        Arguments
-        ----------
-        * `component` (string): the name of the component under which to search.
-        * `kind` (string, optional): filter to match the kind of the component.
-
-        Returns
-        ---------
-        * (list of strings)
+        ...
         """
-
         structure, trace, item = self._get_structure_and_trace(component)
         item_kind, item_label = item.split(':')
 
         if isinstance(kind, str):
             kind = [kind]
 
-        if item_kind not in ['orbit']:
-            # return None
+        # historically only orbits could have children in the hierarchy string,
+        # but stars can now also host children (e.g. disks).  Rather than
+        # hardcoding which kinds are allowed to have children, check whether
+        # the structure actually has a children-list following this item.
+        try:
+            next_item = self._get_by_trace(structure, trace[:-1]+[trace[-1]+1])
+        except (IndexError, TypeError):
             return []
-        else:
-            items = self._get_by_trace(structure, trace[:-1]+[trace[-1]+1])
-            # we want to ignore suborbits
-            #return [str(ch.split(':')[-1]) for ch in items if isinstance(ch, unicode)]
-            return [str(ch.split(':')[-1]) for ch in items if isinstance(ch, str) and (kind is None or ch.split(':')[0] in kind)]
+
+        if not isinstance(next_item, list):
+            return []
+
+        items = next_item
+        return [str(ch.split(':')[-1]) for ch in items if isinstance(ch, str) and (kind is None or ch.split(':')[0] in kind)]
 
     def get_stars_of_children_of(self, component):
         """

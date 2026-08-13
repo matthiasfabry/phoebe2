@@ -115,6 +115,45 @@ def orbit(component, **kwargs):
 
     return ParameterSet(params), constraints
 
+def disk(component, **kwargs):
+    """
+    Create a <phoebe.parameters.ParameterSet> for a new disk.
+
+    Generally, this will be used as an input to the kind argument in
+    <phoebe.frontend.bundle.Bundle.add_component>.  If attaching through
+    <phoebe.frontend.bundle.Bundle.add_component>, all `**kwargs` will be
+    passed on to set the values as described in the arguments below.  Alternatively,
+    see <phoebe.parameters.ParameterSet.set_value> to set/change the values
+    after creating the Parameters.
+
+    In addition, some constraints are created automatically by <phoebe.frontend.bundle.Bundle.set_hierarchy>.
+    For a list of these, see <phoebe.frontend.bundle.Bundle.add_constraint>.
+
+    Arguments
+    ----------
+    * `rin` (float/quantity, optional): inner radius of the disk.
+    * `rout` (float/quantity, optional): outer radius of the disk.
+    * `height` (float/quantity, optional): height of the disk.
+    * `requiv` (float/quantity, optional): equivalent radius of the disk.
+
+    Returns
+    --------
+    * (<phoebe.parameters.ParameterSet>, list): ParameterSet of all newly created
+        <phoebe.parameters.Parameter> objects and a list of all necessary
+        constraints.
+    """
+    params = []
+
+    params += [FloatParameter(qualifier='inner_radius', latexfmt=r'R_{{ \mathrm{{ in }}, \mathrm{{ {component} }} }}', value=kwargs.get('inner_radius', 1.0), default_unit=u.solRad, limits=(0.0,None), description='Inner radius of the disk')]
+    params += [FloatParameter(qualifier='outer_radius', latexfmt=r'R_{{ \mathrm{{ out }}, \mathrm{{ {component} }} }}', value=kwargs.get('outer_radius', 2.0), default_unit=u.solRad, limits=(0.0,None), description='Outer radius of the disk')]
+    params += [FloatParameter(qualifier='height', latexfmt=r'H_{{ \mathrm{{ {component} }} }}', value=kwargs.get('height', 0.1), default_unit=u.solRad, limits=(0.0,None), description='Height of the disk')]
+
+
+    constraints = []
+    # constraints handled by set_hierarchy:
+    # - min_rin
+
+    return ParameterSet(params), constraints
 
 def star(component, **kwargs):
     """
