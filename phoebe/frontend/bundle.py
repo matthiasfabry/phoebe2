@@ -2557,6 +2557,65 @@ class Bundle(ParameterSet):
 
         return affected_params
 
+    def _attach_disk_to_hierarchy(self, component, parent):
+        """
+        Insert a disk component into the hierarchy string as a child of `parent`
+        (which must be a star).  Idempotent: if `component` is already present
+        in the hierarchy's disks, this is a no-op (handles overwrite=True).
+        """
+        hier_param = self.hierarchy
+        if hier_param is None or not len(hier_param.get_value()):
+            raise ValueError("cannot attach a disk to the hierarchy before calling set_hierarchy")
+
+        if component in hier_param.get_disks():
+            # already present (e.g. overwrite=True) -- nothing more to do
+            return
+
+        if parent not in hier_param.get_components():
+            raise ValueError("parent='{}' not found in the hierarchy".format(parent))
+
+        if hier_param.get_kind_of(parent) != 'star':
+            raise ValueError("parent='{}' must be a star, not kind='{}'".format(parent, hier_param.get_kind_of(parent)))
+
+        value = hier_param.get_value()
+        parent_needle = "star:{}".format(parent)
+
+        idx = value.index(parent_needle)
+        insert_pos = idx + len(parent_needle)
+
+        if insert_pos < len(value) and value[insert_pos] == '(':
+            # parent already has children (e.g. another disk) -- extend that list
+            new_value = value[:insert_pos+1] + "disk:{}, ".format(component) + value[insert_pos+1:]
+        else:
+            new_value = value[:insert_pos] + "(disk:{})".format(component) + value[insert_pos:]
+
+        self.set_hierarchy(new_value)
+
+    def _detach_disk_from_hierarchy(self, component):
+        """
+        Remove a disk component from the hierarchy string.
+        """
+        hier_param = self.hierarchy
+        if hier_param is None or component not in hier_param.get_disks():
+            return
+
+        value = hier_param.get_value()
+        needle_solo = "(disk:{})".format(component)
+        needle_first = "disk:{}, ".format(component)
+        needle_last = ", disk:{}".format(component)
+
+        if needle_solo in value:
+            new_value = value.replace(needle_solo, "")
+        elif needle_first in value:
+            new_value = value.replace(needle_first, "")
+        elif needle_last in value:
+            new_value = value.replace(needle_last, "")
+        else:
+            logger.warning("could not automatically remove disk='{}' from the hierarchy string, please update manually".format(component))
+            return
+
+        self.set_hierarchy(new_value)
+
     def set_hierarchy(self, *args, **kwargs):
         """
         Set the hierarchy of the system, and recreate/rerun all necessary
@@ -2632,6 +2691,7 @@ class Bundle(ParameterSet):
         # Handle inter-PS constraints
         starrefs = hier_param.get_stars()
         hier_envelopes = hier_param.get_envelopes()
+        diskrefs = hier_param.get_disks()
 
         # user_interactive_constraints = conf.interactive_constraints
         # conf.interactive_constraints_off()
@@ -4079,18 +4139,21 @@ class Bundle(ParameterSet):
                                                 comp_param.to_list() + [atm_param],
                                                 False, 'run_compute')
 
-
         def _get_proj_area(comp):
             if self.hierarchy.get_kind_of(comp)=='envelope':
                 return np.sum([_get_proj_area(c) for c in self.hierarchy.get_siblings_of(comp)])
+            elif self.hierarchy.get_kind_of(comp)=='disk':
+                return np.pi*self.get_value(qualifier='outer_radius', component=comp, context='component', unit='solRad', **_skip_filter_checks)**2
             else:
                 return np.pi*self.get_value(qualifier='requiv', component=comp, context='component', unit='solRad', **_skip_filter_checks)**2
 
         def _get_surf_area(comp):
             if self.hierarchy.get_kind_of(comp)=='envelope':
                 return np.sum([_get_surf_area(c) for c in self.hierarchy.get_siblings_of(comp)])
+            elif self.hierarchy.get_kind_of(comp)=='disk':
+                return 2 * np.pi * (self.get_value(qualifier='outer_radius', component=comp, context='component', unit='solRad', **_skip_filter_checks)**2 - self.get_value(qualifier='inner_radius', component=comp, context='component', unit='solRad', **_skip_filter_checks)**2)
             else:
-                return 4*np.pi*self.get_value(qualifier='requiv', component=comp, context='component', unit='solRad', **_skip_filter_checks)**2
+                return 4 * np.pi * self.get_value(qualifier='requiv', component=comp, context='component', unit='solRad', **_skip_filter_checks)**2
 
 
         for compute in computes:
@@ -6187,6 +6250,10 @@ class Bundle(ParameterSet):
         func = _get_add_func(_component, kind)
         kind = func.__name__
 
+        parent = kwargs.pop('parent', None)
+        if kind == 'disk' and parent is None:
+            raise ValueError("must provide parent (the label of the star to attach the disk to) when adding a component of kind='disk'")
+
         if kwargs.get('component', False) is None:
             # then we want to apply the default below, so let's pop for now
             _ = kwargs.pop('component')
@@ -6213,6 +6280,8 @@ class Bundle(ParameterSet):
             self.exclude(component=kwargs['component'])._check_label(kwargs['component'], allow_overwrite=False)
 
         self._attach_params(params, **metawargs)
+        if kind == 'disk':
+            self._attach_disk_to_hierarchy(kwargs['component'], parent)
         # attach params called _check_copy_for, but only on it's own parameterset
         self._check_copy_for()
 
@@ -6220,12 +6289,12 @@ class Bundle(ParameterSet):
             self.add_constraint(*constraint)
 
         # Figure options for this dataset
-        fig_params = _figure._add_component(self, kind=kind, **kwargs)
-
-        fig_metawargs = {'context': 'figure',
+        if kind != 'disk':
+            fig_params = _figure._add_component(self, kind=kind, **kwargs)
+            fig_metawargs = {'context': 'figure',
                          'kind': kind,
                          'component': kwargs['component']}
-        self._attach_params(fig_params, **fig_metawargs)
+            self._attach_params(fig_params, **fig_metawargs)
 
 
         # TODO: include figure params in returned PS?
@@ -6456,6 +6525,44 @@ class Bundle(ParameterSet):
         Shortcut to <phoebe.frontend.bundle.Bundle.remove_component> but with kind='envelope'.
         """
         kwargs.setdefault('kind', 'envelope')
+        return self.remove_component(component, **kwargs)
+
+    def add_disk(self, parent, component=None, **kwargs):
+        """
+        Shortcut to <phoebe.frontend.bundle.Bundle.add_component> but with kind='disk'.
+
+        Arguments
+        ----------
+        * `parent` (string): label of the star component this disk is attached to.
+        * `component` (string, optional): label of the newly-created disk.
+        * `**kwargs`: default values for any of the newly-created parameters.
+            See <phoebe.parameters.component.disk>.
+        """
+        kwargs.setdefault('component', component)
+        kwargs.setdefault('parent', parent)
+        return self.add_component('disk', **kwargs)
+
+    def get_disk(self, component=None, **kwargs):
+        """
+        Shortcut to <phoebe.frontend.bundle.Bundle.get_component> but with kind='disk'.
+        """
+        kwargs.setdefault('kind', 'disk')
+        return self.get_component(component, **kwargs)
+
+    def rename_disk(self, old_disk, new_disk, overwrite=False, return_changes=False):
+        """
+        Shortcut to <phoebe.frontend.bundle.Bundle.rename_component> but with kind='disk'.
+        """
+        return self.rename_component(old_disk, new_disk, overwrite=overwrite, return_changes=return_changes)
+
+    def remove_disk(self, component=None, **kwargs):
+        """
+        Shortcut to <phoebe.frontend.bundle.Bundle.remove_component> but with
+        kind='disk', also detaching the disk from the hierarchy.
+        """
+        kwargs.setdefault('kind', 'disk')
+        if component is not None:
+            self._detach_disk_from_hierarchy(component)
         return self.remove_component(component, **kwargs)
 
     def get_ephemeris(self, component=None, period='period', t0='t0_supconj', **kwargs):

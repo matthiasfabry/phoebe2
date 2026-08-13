@@ -34,7 +34,7 @@ def _to_component(obj, allow_hierarchy=True):
         raise NotImplementedError("could not parse {}".format(obj))
 
 
-def binaryorbit(orbit, comp1, comp2, envelope=None):
+def binaryorbit(orbit, comp1, comp2, envelope=None, disk1=None, disk2=None):
     """
     Create the string representation of a hierarchy containing a binary orbit
     with two components.
@@ -54,20 +54,31 @@ def binaryorbit(orbit, comp1, comp2, envelope=None):
         <phoebe.parameters.ParameterSet, optional, default=None): envelope
         component.  If provided, this will create a contact binary system,
         otherwise a detached system will be created.
+    * `disk1` (string or <phoebe.parameters.Parameter> or
+        <phoebe.parameters.ParameterSet, optional, default=None): disk around
+        the primary component.  If provided, this will create a disk around the
+        primary component, otherwise no disk will be created.
+    * `disk2` (string or <phoebe.parameters.Parameter> or
+        <phoebe.parameters.ParameterSet, optional, default=None): disk around
+        the secondary component.  If provided, this will create a disk around the
+        secondary component, otherwise no disk will be created.
 
     Returns
     --------
     * (str): the string representation of the hierarchy, ready to be sent to
         <phoebe.frontend.bundle.Bundle.set_hierarchy>.
     """
-
+    if disk1:
+        return '{}({}({}), {})'.format(_to_component(orbit, False), _to_component(comp1), _to_component(disk1, False), _to_component(comp2))
+    if disk2:
+        return '{}({}, {}({}))'.format(_to_component(orbit, False), _to_component(comp1), _to_component(comp2), _to_component(disk2, False))
     if envelope:
         return '{}({}, {}, {})'.format(_to_component(orbit, False), _to_component(comp1), _to_component(comp2), _to_component(envelope, False))
     else:
         return '{}({}, {})'.format(_to_component(orbit, False), _to_component(comp1), _to_component(comp2))
 
 def component(*args):
-    """
+    """ 
     Create the string representation of a hierarchy that groups multiple objects
     without a parent orbit (ie. a single star or a  disk around a planet).
 
