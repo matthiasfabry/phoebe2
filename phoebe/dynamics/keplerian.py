@@ -56,6 +56,7 @@ def dynamics_from_bundle(b, times, compute=None, return_euler=False, **kwargs):
     hier = b.hierarchy
     starrefs = hier.get_stars()
     orbitrefs = hier.get_orbits()
+    diskrefs = hier.get_disks()
     s = b.filter(context='component', **_skip_filter_checks)
 
     periods, eccs, smas, t0_perpasses, per0s, long_ans, incls, dpdts, \
@@ -119,8 +120,22 @@ def dynamics_from_bundle(b, times, compute=None, return_euler=False, **kwargs):
         # to start with component and end one level short of the top-level orbit
         components.append([hier.get_primary_or_secondary(component=comp) for comp in [component]+ancestororbits[:-1]])
 
+    # disks are centered around their parents, so append copies of the parent star's values to the end of the lists for each disk
+    for component in diskrefs:
+        parent = hier.get_parent_of(component)
+        periods.append(periods[starrefs.index(parent)])
+        eccs.append(eccs[starrefs.index(parent)])
+        smas.append(smas[starrefs.index(parent)])
+        t0_perpasses.append(t0_perpasses[starrefs.index(parent)])
+        per0s.append(per0s[starrefs.index(parent)])
+        long_ans.append(long_ans[starrefs.index(parent)])
+        incls.append(incls[starrefs.index(parent)])
+        dpdts.append(dpdts[starrefs.index(parent)])
+        deccdts.append(deccdts[starrefs.index(parent)])
+        dperdts.append(dperdts[starrefs.index(parent)])
+        components.append(components[starrefs.index(parent)])
 
-    return  dynamics(times, periods, eccs, smas, t0_perpasses, per0s, \
+    return dynamics(times, periods, eccs, smas, t0_perpasses, per0s, \
                     long_ans, incls, dpdts, deccdts, dperdts, \
                     components, t0, vgamma, \
                     mass_conservation=True, ltte=ltte, return_euler=return_euler)
