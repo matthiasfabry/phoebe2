@@ -193,12 +193,14 @@ class System(object):
 
             return compute_ps.get_value(qualifier='distortion_method', component=component, distortion_method=kwargs.get('distortion_method', None), **_skip_filter_checks)
 
-        bodies_dict = {comp: globals()[_get_classname(hier.get_kind_of(comp), get_distortion_method(hier, compute_ps, comp, **kwargs))].from_bundle(b, comp, compute, dynamics_method=dynamics_method, datasets=datasets, **kwargs) for comp in meshables}
 
+        bodies_dict = {}
+        for comp in meshables:
+            if hier.get_kind_of(comp) != 'disk':
+                bodies_dict[comp] = globals()[_get_classname(hier.get_kind_of(comp), get_distortion_method(hier, compute_ps, comp, **kwargs))].from_bundle(b, comp, compute, dynamics_method=dynamics_method, datasets=datasets, **kwargs)
+            else:
+                bodies_dict[comp] = Disk.from_bundle(b, comp, compute, datasets=datasets, **kwargs)
 
-        bodies_dict['disk01'] = Disk(bodies_dict['secondary'], 'disk01',
-                                     1.01, 1.50, 0.05, b.get_value('requiv', component='secondary')
-                                     )
         # envelopes need to know their relationships with the underlying stars
         parent_envelope_of = {}
         for meshable in meshables:
@@ -300,6 +302,7 @@ class System(object):
         all arrays should be for the current time, but iterable over all bodies
         """
         logger.debug('system.update_positions ignore_effects={}'.format(ignore_effects))
+        logger.debug('system.update_positions:, xs={}, ys={}, zs={}'.format(xs, ys, zs))
         self.xs = np.array(_value(xs))
         self.ys = np.array(_value(ys))
         self.zs = np.array(_value(zs))
@@ -462,7 +465,7 @@ class System(object):
         else:
             logger.debug("system.handle_eclipses: determining if eclipses are possible from instantaneous_maxr")
             max_rs = [body.instantaneous_maxr for body in self.bodies]
-            # logger.debug("system.handle_eclipses: max_rs={}".format(max_rs))
+            logger.debug("system.handle_eclipses: max_rs={}".format(max_rs))
             for i in range(0, len(max_rs)-1):
                 for j in range(i+1, len(max_rs)):
                     proj_sep_sq = sum([(c[i]-c[j])**2 for c in (self.xs,self.ys)])
@@ -1098,31 +1101,45 @@ class Disk(Body):
     integrator assigned to the parent, so the disk automatically follows
     the star through whatever orbit (circular, eccentric, etc.) it's in.
     """
-    def __init__(self, parent, component, inner_radius, outer_radius, height, scale):
-        """
-        TODO: add documentation
-        """
-        self.parent = parent
+    def __init__(self, parent_component, component, inner_radius, outer_radius, height, scale):
+
+        self._parent_component = parent_component
         self.component = component
 
         # self.mesh will be filled later once a mesh is created and placed in orbit
-        self._mesh = None
-        self._standard_meshes = {}  # matches Body's convention (keyed by etheta, always 0.0 here)
-        self._force_recompute_instantaneous_next_update_position = False
         self.inner_radius = inner_radius
         self.outer_radius = outer_radius
         self.height = height
-        print("Disk scale:", scale)
         self._scale = scale
 
-        # disks don't (yet) support features (spots, pulsations, etc)
+        # disks don't support features (spots, pulsations, etc)
         self.features = []
+
+        self._standard_meshes = {}
+        self.mesh_method = 'cylindrical'
 
     def copy(self):
         """
         Make a deepcopy of this Mesh object
         """
         return copy.deepcopy(self)
+
+    @property
+    def parent(self):
+        """
+        Resolve and return the parent Star Body.
+
+        This can't be resolved until self.system has been set, which happens
+        in System.__init__ (`body.system = self` for every entry in
+        bodies_dict) -- i.e. *after* all Bodies (including this Disk and its
+        parent star) have already been constructed. That's fine: the only
+        places that actually need self.parent (ind_self, ind_self_vel,
+        update_position) are only ever called later, once the full System
+        exists.
+        """
+        if getattr(self, 'system', None) is None:
+            raise ValueError("{}.parent is not available until attached to a System".format(self.component))
+        return self.system.get_body(self._parent_component)
     
     @property
     def instantaneous_maxr(self):
@@ -1169,6 +1186,22 @@ class Disk(Body):
                               weights=[self._get_mass_by_index(i) for i in index])
         else:
             return coords_array[index]
+    
+    @classmethod
+    def from_bundle(cls, b, component, compute=None,
+                    datasets=[], pot=None, **kwargs):
+
+        ntriangles_override = kwargs.pop('ntriangles', None)
+        kwargs.setdefault('ntriangles', b.get_value(qualifier='ntriangles', component=component, compute=compute, 
+                                                    ntriangles=ntriangles_override, **_skip_filter_checks) if compute is not None else 1000)
+
+        parent = b.hierarchy.get_parent_of(component)
+        return cls(parent_component=parent, component=component,
+                   inner_radius=b.get_value(qualifier='inner_radius', component=component, **_skip_filter_checks),
+                   outer_radius=b.get_value(qualifier='outer_radius', component=component, **_skip_filter_checks),
+                   height=b.get_value(qualifier='height', component=component, **_skip_filter_checks),
+                   scale=b.get_value(qualifier='requiv', component=parent, **_skip_filter_checks),
+        )
 
     def _build_mesh(self, *args, **kwargs):
         """
@@ -1189,7 +1222,6 @@ class Disk(Body):
                                             area=True,
                                             volume=True,
                                             )
-        print("new_mesh_dict keys:", new_mesh_dict.keys())
         return new_mesh_dict
 
     def update_position(self, time,
@@ -1969,7 +2001,6 @@ class Star(Body):
         cols = lc_cols
         cols['rvs'] = rvs
         return cols
-
 
     def _populate_lc(self, dataset, ignore_effects=False, **kwargs):
         """

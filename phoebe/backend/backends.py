@@ -221,7 +221,7 @@ def _extract_from_bundle(b, compute, dataset=None, times=None,
             # TODO: eventually spectra and RVs as well (maybe even LCs and ORBs)
             dataset_components = b.hierarchy.get_stars() + b.hierarchy.get_orbits()
         else:
-            dataset_components = b.hierarchy.get_stars()
+            dataset_components = b.hierarchy.get_stars() + b.hierarchy.get_disks()
 
         for component in dataset_components:
             if isinstance(provided_times, dict) and dataset in provided_times.keys():
