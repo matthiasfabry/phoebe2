@@ -868,7 +868,6 @@ class Body(object):
         theta = 0.0
         protomesh = self._standard_meshes[theta] #.copy() # if theta in self._standard_meshes.keys() else self.mesh.copy()
 
-        print(protomesh.keys())
         if scaled:
             # TODO: be careful about self._scale... we may want self._instantaneous_scale
             return mesh.ScaledProtoMesh.from_proto(protomesh, self._scale)
@@ -1101,7 +1100,10 @@ class Disk(Body):
     integrator assigned to the parent, so the disk automatically follows
     the star through whatever orbit (circular, eccentric, etc.) it's in.
     """
-    def __init__(self, parent_component, component, inner_radius, outer_radius, height, teff, scale):
+    def __init__(self, parent_component, component, inner_radius, outer_radius, height, teff, scale,
+                 atm, atm_extrapolation_method, ld_extrapolation_method, blending_method,
+                 passband, intens_weighting, extinct, Rv, ld_mode, ld_func, ld_coeffs, ld_coeffs_source, lp_profile_rest,
+                 boosting_method, boosting_index):
 
         self._parent_component = parent_component
         self.component = component
@@ -1112,12 +1114,36 @@ class Disk(Body):
         self.height = height
         self._scale = scale
 
-        # disks don't support features (spots, pulsations, etc)
-        self.features = []
-
         self._standard_meshes = {}
         self.mesh_method = 'cylindrical'
         self.teff = teff
+
+        #COMPUTE-DEPENDENT DICTS
+        self.atm = atm
+        self.atm_extrapolation_method = atm_extrapolation_method
+        self.ld_extrapolation_method = ld_extrapolation_method
+        self.blending_method = blending_method
+
+        # DATSET-DEPENDENT DICTS
+        self.passband = passband
+        self.intens_weighting = intens_weighting
+        self.extinct = extinct
+        self.Rv = Rv
+        self.ld_mode = ld_mode
+        self.ld_func = ld_func
+        self.ld_coeffs = ld_coeffs
+        self.ld_coeffs_source = ld_coeffs_source
+        self.lp_profile_rest = lp_profile_rest
+        self.boosting_method = boosting_method
+        self.boosting_index = boosting_index
+
+        # Let's create a dictionary to handle how each dataset should scale between
+        # absolute and relative intensities.
+        self._pblum_scale = {}
+        self._ptfarea = {}
+
+        # disks don't support features (spots, pulsations, etc)
+        self.features = []
 
     def copy(self):
         """
@@ -1196,13 +1222,72 @@ class Disk(Body):
         kwargs.setdefault('ntriangles', b.get_value(qualifier='ntriangles', component=component, compute=compute, 
                                                     ntriangles=ntriangles_override, **_skip_filter_checks) if compute is not None else 1000)
 
-        parent = b.hierarchy.get_parent_of(component)
-        return cls(parent_component=parent, component=component,
-                   inner_radius=b.get_value(qualifier='inner_radius', component=component, **_skip_filter_checks),
-                   outer_radius=b.get_value(qualifier='outer_radius', component=component, **_skip_filter_checks),
-                   height=b.get_value(qualifier='height', component=component, **_skip_filter_checks),
-                   teff=b.get_value(qualifier='teff', component=component, **_skip_filter_checks),
-                   scale=b.get_value(qualifier='requiv', component=parent, **_skip_filter_checks),
+        parent_component = b.hierarchy.get_parent_of(component)
+
+        inner_radius = b.get_value(qualifier='inner_radius',  component=component, context='component', unit=u.solRad, **_skip_filter_checks)
+        outer_radius = b.get_value(qualifier='outer_radius', component=component, context='component', unit=u.solRad, **_skip_filter_checks)
+        height = b.get_value(qualifier='height', component=component, context='component', unit=u.solRad, **_skip_filter_checks)
+        teff = b.get_value(qualifier='teff', component=component, context='component', unit=u.K, **_skip_filter_checks)
+        scale = b.get_value(qualifier='requiv', component=parent_component, context='component', unit=u.solRad, **_skip_filter_checks)
+
+        datasets_intens = [ds for ds in b.filter(kind=['lc', 'rv', 'lp'], context='dataset').datasets if ds != '_default']
+        datasets_lp = [ds for ds in b.filter(kind=['lp'], context='dataset').datasets if ds != '_default']
+
+        atm_override = kwargs.pop('atm', None)
+        if isinstance(atm_override, dict):
+            atm_override = atm_override.get(component, None)
+        atm = b.get_value(qualifier='atm', compute=compute, component=component, atm=atm_override, **_skip_filter_checks) if compute is not None else atm_override if atm_override is not None else 'ck2004'
+
+        if atm in ['blackbody', 'extern_planckint', 'extern_atmx']:
+            atm_extrapolation_method = 'none'
+            ld_extrapolation_method = 'none'
+            blending_method = 'none'
+        else:
+            atm_extrapolation_method_override = kwargs.pop('atm_extrapolation_method', None)
+            atm_extrapolation_method = b.get_value(qualifier='atm_extrapolation_method', compute=compute, component=component, atm_extrapolation_method=atm_extrapolation_method_override, **_skip_filter_checks) if compute is not None else atm_extrapolation_method_override if atm_extrapolation_method_override is not None else 'linear'
+
+            ld_extrapolation_method_override = kwargs.pop('ld_extrapolation_method', None)
+            ld_extrapolation_method = b.get_value(qualifier='ld_extrapolation_method', compute=compute, component=component, ld_extrapolation_method=ld_extrapolation_method_override, **_skip_filter_checks) if compute is not None else ld_extrapolation_method_override if ld_extrapolation_method_override is not None else 'nearest'
+
+            if atm_extrapolation_method == 'none' or ld_extrapolation_method == 'none':
+                blending_method = 'none'
+            else:
+                blending_method_override = kwargs.pop('blending_method', None)
+                blending_method = b.get_value(qualifier='blending_method', compute=compute, component=component, blending_method=blending_method_override, **_skip_filter_checks) if compute is not None else blending_method_override if blending_method_override is not None else 'blackbody'
+
+        passband_override = kwargs.pop('passband', None)
+        passband = {ds: b.get_value(qualifier='passband', dataset=ds, passband=passband_override, **_skip_filter_checks) for ds in datasets_intens}
+        intens_weighting_override = kwargs.pop('intens_weighting', None)
+        intens_weighting = {ds: b.get_value(qualifier='intens_weighting', dataset=ds, intens_weighting=intens_weighting_override, **_skip_filter_checks) for ds in datasets_intens}
+        ebv_override = kwargs.pop('ebv', None)
+        extinct = b.get_value('ebv', context='system', ebv=ebv_override, **_skip_filter_checks)
+        Rv_override = kwargs.pop('Rv', None)
+        Rv = b.get_value('Rv', context='system', Rv=Rv_override)
+        ld_mode_override = kwargs.pop('ld_mode', None)
+        ld_mode = {ds: b.get_value(qualifier='ld_mode', dataset=ds, component=component, ld_mode=ld_mode_override, **_skip_filter_checks) for ds in datasets_intens}
+        ld_func_override = kwargs.pop('ld_func', None)
+        ld_func = {ds: b.get_value(qualifier='ld_func', dataset=ds, component=component, ld_func=ld_func_override, **_skip_filter_checks) for ds in datasets_intens}
+        ld_coeffs_override = kwargs.pop('ld_coeffs', None)
+        ld_coeffs = {ds: b.get_value(qualifier='ld_coeffs', dataset=ds, component=component, context='dataset', ld_coeffs=ld_coeffs_override, **_skip_filter_checks) for ds in datasets_intens}
+        ld_coeffs_source_override = kwargs.pop('ld_coeffs_source', None)
+        ld_coeffs_source = {ds: b.get_value(qualifier='ld_coeffs_source', dataset=ds, component=component, ld_coeffs_source=ld_coeffs_source_override, **_skip_filter_checks) for ds in datasets_intens}
+        ld_func_bol_override = kwargs.pop('ld_func_bol', None)
+        ld_func['bol'] = b.get_value(qualifier='ld_func_bol', component=component, context='component', ld_func_bol=ld_func_bol_override, **_skip_filter_checks)
+        ld_coeffs_bol_override = kwargs.pop('ld_coeffs_bol', None)
+        ld_coeffs['bol'] = b.get_value(qualifier='ld_coeffs_bol', component=component, context='component', ld_coeffs_bol=ld_coeffs_bol_override, **_skip_filter_checks)
+        profile_rest_override = kwargs.pop('profile_rest', None)
+        lp_profile_rest = {ds: b.get_value(qualifier='profile_rest', dataset=ds, unit=u.nm, profile_rest=profile_rest_override, **_skip_filter_checks) for ds in datasets_lp}
+        boosting_method_override = kwargs.pop('boosting_method', None)
+        boosting_method = {ds: b.get_value(qualifier='boosting_method', dataset=ds, component=component, boosting_method=boosting_method_override, **_skip_filter_checks) for ds in datasets_intens}
+        boosting_index_override = kwargs.pop('boosting_index', None)
+        boosting_index = {ds: b.get_value(qualifier='boosting_index', dataset=ds, component=component, boosting_index=boosting_index_override, **_skip_filter_checks) for ds in datasets_intens}
+
+
+        return cls(parent_component, component, inner_radius, outer_radius, height, teff, scale,
+                 atm, atm_extrapolation_method, ld_extrapolation_method, blending_method,
+                 passband, intens_weighting, extinct, Rv, ld_mode, ld_func, ld_coeffs, ld_coeffs_source, lp_profile_rest,
+                 boosting_method, boosting_index
+
         )
 
     def _build_mesh(self, *args, **kwargs):
@@ -1265,23 +1350,242 @@ class Disk(Body):
                                                 component_com_x)
 
         # assign a constant temperature at all triangles (for now) -- this is just a placeholder until we implement a more realistic disk model
-        teffs = np.full(self.mesh.Ntriangles, 5000.0)
-        self.mesh.update_columns(teffs=teffs)
-
-        return
+        self.compute_local_quantities(xs, ys, zs, ignore_effects)
 
     def compute_local_quantities(self, xs, ys, zs, ignore_effects=False, **kwargs):
         """
+        Compute local quantities for the disk.
         """
-        raise NotImplementedError("compute_local_quantities needs to be overridden by the subclass of Star")
+        teffs = np.full(self.mesh.Nvertices, self.teff)
+        self.mesh.update_columns(teffs=teffs)
 
-    def populate_observable(self, time, kind, dataset, ignore_effects=False, force_recompute=False, **kwargs):
+    def _populate_lc(self, dataset, ignore_effects=False, **kwargs):
         """
-        TODO: add documentation
+        Populate columns necessary for an LC dataset
+
+        This should not be called directly, but rather via :meth:`Body.populate_observable`
+        or :meth:`System.populate_observables`
+
+        :raises NotImplementedError: if lc_method is not supported
         """
-        pass
+        logger.debug("{}._populate_lc(dataset={}, ignore_effects={})".format(self.component, dataset, ignore_effects))
 
+        lc_method = kwargs.get('lc_method', 'numerical')  # TODO: make sure this is actually passed
 
+        passband = kwargs.get('passband', self.passband.get(dataset, None))
+        intens_weighting = kwargs.get('intens_weighting', self.intens_weighting.get(dataset, None))
+        atm = kwargs.get('atm', self.atm)
+        atm_extrapolation_method = kwargs.get('atm_extrapolation_method', self.atm_extrapolation_method)
+        ld_extrapolation_method = kwargs.get('ld_extrapolation_method', self.ld_extrapolation_method)
+        blending_method = kwargs.get('blending_method', self.blending_method)
+        extinct = kwargs.get('extinct', self.extinct)
+        Rv = kwargs.get('Rv', self.Rv)
+        ld_mode = kwargs.get('ld_mode', self.ld_mode.get(dataset, None))
+        ld_func = kwargs.get('ld_func', self.ld_func.get(dataset, None))
+        ld_coeffs = kwargs.get('ld_coeffs', self.ld_coeffs.get(dataset, None)) if ld_mode == 'manual' else None
+        ld_coeffs_source = kwargs.get('ld_coeffs_source', self.ld_coeffs_source.get(dataset, 'none')) if ld_mode == 'lookup' else None
+
+        boosting_method = kwargs.get('boosting_method', self.boosting_method.get(dataset, None))
+        bindex = kwargs.get('boosting_index', self.boosting_index.get(dataset, None)) if boosting_method == 'manual' else None
+
+        atm_model = models._atmtable[atm]
+
+        if ld_mode == 'interp':
+            # calls to pb.Imu need to pass on ld_func='interp'
+            # NOTE: we'll do another check when calling pb.Imu, but we'll also
+            # change the value here for the debug logger
+            ld_func = 'interp'
+            ldatm_model = atm_model
+        elif ld_mode == 'lookup':
+            if ld_coeffs_source == 'auto':
+                # default to ck2004 for external and blackbody atmospheres, and
+                # use the same model atmosphere for all other atmospheres:
+                ldatm_model = models.CK2004ModelAtmosphere if atm_model.external or not hasattr(atm_model, 'mus') else atm_model
+            else:
+                ldatm_model = models._atmtable[ld_coeffs_source]
+        elif ld_mode == 'manual':
+            ldatm_model = None
+        else:
+            raise NotImplementedError
+
+        logger.debug(f'{ld_mode=}, {ld_func=}, {ld_coeffs=}, {atm_model=}, {ldatm_model=}')
+
+        pblum = kwargs.get('pblum', 4*np.pi)
+
+        if lc_method == 'numerical':
+            pb = passbands.get_passband(passband)
+
+            if ldatm_model is not None and f'{ldatm_model.name}:ldint' not in pb.content:
+                if ld_mode == 'lookup':
+                    raise ValueError(f'{ldatm_model.name} not supported for limb-darkening with {pb.pbset}:{pb.pbname} passband.  Try changing the value of the ld_coeffs_source parameter')
+                else:
+                    raise ValueError(f'{ldatm_model.name} not supported for limb-darkening with {pb.pbset}:{pb.pbname} passband.  Try changing the value of the atm parameter')
+
+            if intens_weighting == 'photon':
+                ptfarea = pb.ptf_photon_area/passbands.h.value/passbands.c.value
+            else:
+                ptfarea = pb.ptf_area
+
+            self.set_ptfarea(dataset, ptfarea)
+
+            # figure out what columns need to be packed into query_pts:
+            query_cols = atm_model.basic_axis_names.copy()
+            if ldatm_model is not None and ldatm_model != atm_model:
+                # add any new ldatm columns:
+                # note: can't use set() because the order is arbitrary
+                query_cols += [column for column in ldatm_model.basic_axis_names if column not in query_cols]
+
+            for column in query_cols:
+                print(f'{column}: {getattr(self.mesh, column).for_computations.shape}')
+            query_pts = np.stack((
+                [getattr(self.mesh, column).for_computations for column in query_cols]
+            )).T
+
+            # TODO: change this once mus are stored as a column in the mesh
+            # if hasattr(atm_model, 'mus') or hasattr(ldatm_model, 'mus'):
+            query_cols += ['mus']
+            print(f'compute_at_vertices={self.mesh._compute_at_vertices}')
+            query_pts = np.c_[query_pts, np.abs(self.mesh.mus_for_computations)]
+
+            if extinct != 0.0 and not ignore_effects:
+                query_cols += ['ebvs', 'rvs']
+                ebvs = np.full_like(query_pts[:, 0], fill_value=extinct)
+                rvs = np.full_like(query_pts[:, 0], fill_value=Rv)
+                query_pts = np.c_[query_pts, ebvs, rvs]
+
+            query = passbands.InterpQuery(cols=query_cols, pts=query_pts)
+
+            ldint = pb.interpolate_ldints(
+                query=query,
+                ldatm=ldatm_model,
+                ld_func=ld_func if ld_mode != 'interp' else ld_mode,
+                ld_coeffs=ld_coeffs,
+                intens_weighting=intens_weighting,
+                ld_extrapolation_method=ld_extrapolation_method,
+            ).get_interpolated_values()
+
+            abs_normal_intensities = pb.interpolate_inorms(
+                query=query,
+                atm=atm_model,
+                ldatm=ldatm_model,
+                ldint=ldint,
+                ld_func=ld_func,
+                ld_coeffs=ld_coeffs,
+                intens_weighting=intens_weighting,
+                atm_extrapolation_method=atm_extrapolation_method,
+                ld_extrapolation_method=ld_extrapolation_method,
+                blending_method=blending_method
+            ).get_interpolated_values()
+
+            abs_intens_results = pb.interpolate_imus(
+                query=query,
+                atm=atm_model,
+                ldatm=ldatm_model,
+                ldint=ldint,
+                ld_func=ld_func if ld_mode != 'interp' else ld_mode,
+                ld_coeffs=ld_coeffs,
+                intens_weighting=intens_weighting,
+                atm_extrapolation_method=atm_extrapolation_method,
+                ld_extrapolation_method=ld_extrapolation_method,
+                blending_method=blending_method
+            )
+            abs_intensities = abs_intens_results.get_interpolated_values()
+            blending_factors = abs_intens_results.get_bfs()
+            if blending_factors is not None:
+                blending_factors = blending_factors.copy()
+            else:
+                blending_factors = np.full(abs_intensities.shape[0], np.nan)
+
+            extrapolation_dists = abs_intens_results.get_distances()
+            if extrapolation_dists is not None:
+                extrapolation_dists = extrapolation_dists.copy()
+            else:
+                extrapolation_dists = np.full(abs_intensities.shape[0], np.nan)
+
+            # Beaming/boosting
+            if boosting_method == 'none' or ignore_effects:
+                boost_factors = 1.0
+            elif boosting_method == 'manual':
+                # bindex = kwargs.get('boosting_index', self.boosting_index)
+                # bindex = kwargs.get('boosting_index', self.boosting_index.get(dataset, None))
+                boost_factors = 1.0 + bindex * self.mesh.velocities.for_computations[:, 2] / 37241.94167601236
+            else:
+                raise NotImplementedError("boosting_method='{}' not supported".format(self.boosting_method))
+
+            # boosting is aspect dependent so we don't need to correct the
+            # normal intensities
+            abs_intensities *= np.atleast_2d(boost_factors).T
+
+            # interstellar extinction (reddening):
+            if extinct == 0.0 or ignore_effects:
+                extinct_factors = 1.0
+            else:
+                result = pb.interpolate_extinct(
+                    query=query,
+                    atm=atm_model,
+                    intens_weighting=intens_weighting,
+                    extrapolation_method=atm_extrapolation_method
+                )
+                extinct_factors = result.interps
+
+            # extinction is NOT aspect dependent, so we'll correct both
+            # normal and directional intensities
+            abs_intensities *= extinct_factors
+            abs_normal_intensities *= extinct_factors
+
+            # Handle pblum - distance and l3 scaling happens when integrating (in observe)
+            # we need to scale each triangle so that the summed normal_intensities over the
+            # entire star is equivalent to pblum / 4pi
+            # print(f'{self.get_pblum_scale(dataset)=}')
+            normal_intensities = abs_normal_intensities * self.get_pblum_scale(dataset)
+            intensities = abs_intensities * self.get_pblum_scale(dataset)
+
+        elif lc_method == 'analytical':
+            raise NotImplementedError("analytical fluxes not yet supported")
+            # TODO: this probably needs to be moved into observe or backends.phoebe
+            # (assuming it doesn't result in per-triangle quantities)
+
+        else:
+            raise NotImplementedError("lc_method '{}' not recognized".format(lc_method))
+
+        # TODO: do we really need to store all of these if store_mesh==False?
+        # Can we optimize by only returning the essentials if we know we don't need them?
+        return {'abs_normal_intensities': abs_normal_intensities.flatten(),
+                'normal_intensities': normal_intensities.flatten(),
+                'abs_intensities': abs_intensities.flatten(),
+                'intensities': intensities.flatten(),
+                'ldint': ldint.flatten(),
+                'boost_factors': boost_factors,
+                'blending_factors': blending_factors.flatten(),
+                'extrapolation_dists': extrapolation_dists.flatten()}
+
+    def set_ptfarea(self, dataset, ptfarea, **kwargs):
+        """
+        """
+        self._ptfarea[dataset] = ptfarea
+
+    def get_ptfarea(self, dataset, **kwargs):
+        """
+        """
+        # kwargs needed just so component can be passed but ignored
+
+        return self._ptfarea[dataset]
+
+    def set_pblum_scale(self, dataset, pblum_scale, **kwargs):
+        """
+        """
+        self._pblum_scale[dataset] = pblum_scale
+
+    def get_pblum_scale(self, dataset, **kwargs):
+        """
+        """
+        # kwargs needed just so component can be passed but ignored
+
+        if dataset in self._pblum_scale.keys():
+            return self._pblum_scale[dataset]
+        else:
+            #logger.warning("no pblum scale found for dataset: {}".format(dataset))
+            return 1.0
 
 class Star(Body):
     def __init__(self, component, comp_no, ind_self, ind_sibling, masses, ecc, incl,

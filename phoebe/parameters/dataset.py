@@ -183,29 +183,29 @@ def lc(syn=False, as_ps=True, is_lc=True, **kwargs):
     if not syn:
         # TODO: should we move all limb-darkening to compute options since
         # not all backends support interp (and lookup is atm-dependent)
-        params += [ChoiceParameter(qualifier='ld_mode', copy_for={'kind': ['star'], 'component': '*'}, component='_default',
+        params += [ChoiceParameter(qualifier='ld_mode', copy_for={'kind': ['star', 'disk'], 'component': '*'}, component='_default',
                                    value=kwargs.get('ld_mode', 'interp'), choices=['interp', 'lookup', 'manual'],
                                    description='Mode to use for limb-darkening')]
         params += [ChoiceParameter(visible_if='ld_mode:lookup|manual', qualifier='ld_func',
-                                   copy_for={'kind': ['star'], 'component': '*'}, component='_default',
+                                   copy_for={'kind': ['star', 'disk'], 'component': '*'}, component='_default',
                                    value=kwargs.get('ld_func', 'logarithmic'), choices=_ld_func_choices,
                                    description='Limb darkening model')]
         params += [ChoiceParameter(visible_if='ld_mode:lookup', qualifier='ld_coeffs_source',
-                                   copy_for={'kind': ['star'], 'component': '*'}, component='_default',
+                                   copy_for={'kind': ['star', 'disk'], 'component': '*'}, component='_default',
                                    value=kwargs.get('ld_coeffs_source', 'auto'), choices=_ld_coeffs_source_choices,
                                    advanced=True,
                                    description='Source for limb darkening coefficients (\'auto\' to interpolate from the applicable table according to the \'atm\' parameter, or the name of a specific atmosphere table)')]
         params += [FloatArrayParameter(visible_if='ld_mode:manual', qualifier='ld_coeffs',
                                        latexfmt=r'\mathrm{{ ldc }}_\mathrm{{ {dataset}, {component} }}',
-                                       copy_for={'kind': ['star'], 'component': '*'}, component='_default',
+                                       copy_for={'kind': ['star', 'disk'], 'component': '*'}, component='_default',
                                        value=kwargs.get('ld_coeffs', [0.5, 0.5]), default_unit=u.dimensionless_unscaled,
                                        required_shape=[None],
                                        description='Limb darkening coefficients')]
-        params += [ChoiceParameter(qualifier='boosting_method', copy_for={'kind': ['star'], 'component': '*'}, component='_default',
+        params += [ChoiceParameter(qualifier='boosting_method', copy_for={'kind': ['star', 'disk'], 'component': '*'}, component='_default',
                                    value=kwargs.get('boosting_method', 'none'), choices=['none', 'manual'],
                                    description='Method to use for Doppler boosting')]
         params += [FloatParameter(visible_if='boosting_method:manual', qualifier='boosting_index',
-                                       copy_for={'kind': ['star'], 'component': '*'}, component='_default',
+                                       copy_for={'kind': ['star', 'disk'], 'component': '*'}, component='_default',
                                        value=kwargs.get('boosting_index', 1.0), limits=[0.0, None], default_unit=u.dimensionless_unscaled,
                                        description='Boosting index')]
 
