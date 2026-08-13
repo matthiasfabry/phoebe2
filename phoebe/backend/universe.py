@@ -1101,7 +1101,7 @@ class Disk(Body):
     integrator assigned to the parent, so the disk automatically follows
     the star through whatever orbit (circular, eccentric, etc.) it's in.
     """
-    def __init__(self, parent_component, component, inner_radius, outer_radius, height, scale):
+    def __init__(self, parent_component, component, inner_radius, outer_radius, height, teff, scale):
 
         self._parent_component = parent_component
         self.component = component
@@ -1117,6 +1117,7 @@ class Disk(Body):
 
         self._standard_meshes = {}
         self.mesh_method = 'cylindrical'
+        self.teff = teff
 
     def copy(self):
         """
@@ -1200,6 +1201,7 @@ class Disk(Body):
                    inner_radius=b.get_value(qualifier='inner_radius', component=component, **_skip_filter_checks),
                    outer_radius=b.get_value(qualifier='outer_radius', component=component, **_skip_filter_checks),
                    height=b.get_value(qualifier='height', component=component, **_skip_filter_checks),
+                   teff=b.get_value(qualifier='teff', component=component, **_skip_filter_checks),
                    scale=b.get_value(qualifier='requiv', component=parent, **_skip_filter_checks),
         )
 
@@ -1255,11 +1257,17 @@ class Disk(Body):
 
         scaledprotomesh = self.get_standard_mesh(scaled=True)
 
+
         logger.debug("{}.update_position: placing in orbit at t={}".format(self.component, self.time))
         self._mesh = mesh.Mesh.from_scaledproto(scaledprotomesh.copy(),
                                                 pos, vel, euler, euler_vel,
                                                 (0, 0, 0),
                                                 component_com_x)
+
+        # assign a constant temperature at all triangles (for now) -- this is just a placeholder until we implement a more realistic disk model
+        teffs = np.full(self.mesh.Ntriangles, 5000.0)
+        self.mesh.update_columns(teffs=teffs)
+
         return
 
     def compute_local_quantities(self, xs, ys, zs, ignore_effects=False, **kwargs):

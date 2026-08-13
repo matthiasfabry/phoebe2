@@ -147,7 +147,7 @@ def disk(component, **kwargs):
     params += [FloatParameter(qualifier='inner_radius', latexfmt=r'R_{{ \mathrm{{ in }}, \mathrm{{ {component} }} }}', value=kwargs.get('inner_radius', 1.0), default_unit=u.solRad, limits=(0.0,None), description='Inner radius of the disk')]
     params += [FloatParameter(qualifier='outer_radius', latexfmt=r'R_{{ \mathrm{{ out }}, \mathrm{{ {component} }} }}', value=kwargs.get('outer_radius', 2.0), default_unit=u.solRad, limits=(0.0,None), description='Outer radius of the disk')]
     params += [FloatParameter(qualifier='height', latexfmt=r'H_{{ \mathrm{{ {component} }} }}', value=kwargs.get('height', 0.1), default_unit=u.solRad, limits=(0.0,None), description='Height of the disk')]
-
+    params += [FloatParameter(qualifier='teff', latexfmt=r'T_{{ \mathrm{{ eff }}, \mathrm{{ {component} }} }}', value=kwargs.get('teff', 5000.0), default_unit=u.K, limits=(0.0,None), description='Effective temperature of the disk')]
 
     constraints = []
     # constraints handled by set_hierarchy:
