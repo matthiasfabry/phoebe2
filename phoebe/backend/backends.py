@@ -934,7 +934,7 @@ class PhoebeBackend(BaseBackendByTime):
                                           lc_only=True,
                                           **kwargs):
 
-        logger.debug("rank:{}/{} PhoebeBackend._create_system_and_compute_pblums: calling universe.System.from_bundle".format(mpi.myrank, mpi.nprocs))
+        logger.debug("rank:{}/{} PhoebeBackend._compute_intrinsic_system_at_t0: calling universe.System.from_bundle".format(mpi.myrank, mpi.nprocs))
         system = universe.System.from_bundle(b, compute, datasets=b.datasets, **kwargs)
 
         if dynamics_method is None:
@@ -954,7 +954,7 @@ class PhoebeBackend(BaseBackendByTime):
         t0 = b.get_value(qualifier='t0', context='system', unit=u.d, t0=kwargs.get('t0', None), **_skip_filter_checks)
 
         if len(meshablerefs) > 1 or hier.get_kind_of(meshablerefs[0])=='envelope':
-            logger.debug("rank:{}/{} PhoebeBackend._create_system_and_compute_pblums: computing dynamics at t0".format(mpi.myrank, mpi.nprocs))
+            logger.debug("rank:{}/{} PhoebeBackend._compute_intrinsic_system_at_t0: computing dynamics at t0".format(mpi.myrank, mpi.nprocs))
             # TODO: make sure that this takes systemic velocity and corrects positions and velocities (including ltte effects if enabled)
             t0, xs0, ys0, zs0, vxs0, vys0, vzs0, ethetas0, elongans0, eincls0 = dynamics.keplerian.dynamics_from_bundle(b, [t0], compute, return_euler=True, **kwargs)
             x0, y0, z0, vx0, vy0, vz0, etheta0, elongan0, eincl0 = dynamics.dynamics_at_i(xs0, ys0, zs0, vxs0, vys0, vzs0, ethetas0, elongans0, eincls0, i=0)
@@ -980,7 +980,7 @@ class PhoebeBackend(BaseBackendByTime):
 
 
         if reset:
-            logger.debug("rank:{}/{} PhoebeBackend._create_system_and_compute_pblums: resetting system".format(mpi.myrank, mpi.nprocs))
+            logger.debug("rank:{}/{} PhoebeBackend._compute_intrinsic_system_at_t0: resetting system".format(mpi.myrank, mpi.nprocs))
             system.reset(force_recompute_instantaneous=True)
 
         return system
@@ -990,7 +990,7 @@ class PhoebeBackend(BaseBackendByTime):
         logger.debug("rank:{}/{} PhoebeBackend._worker_setup: extracting parameters".format(mpi.myrank, mpi.nprocs))
         computeparams = b.get_compute(compute, force_ps=True)
         hier = b.get_hierarchy()
-        starrefs  = hier.get_stars()
+        starrefs = hier.get_stars()
         meshablerefs = hier.get_meshables()
         extrapolation_max_frac_override = kwargs.get('extrapolation_max_frac', None)
         extrapolation_max_frac = {
@@ -1218,6 +1218,7 @@ class PhoebeBackend(BaseBackendByTime):
                 packetlist.append(_make_packet('flux_densities',
                                               obs['flux_densities']*u.W/(u.m**2*u.nm),
                                               time, info))
+
             elif kind=='rv':
                 ### this_syn['times'].append(time) # time array was set when initializing the syns
                 if info['needs_mesh']:
@@ -1510,7 +1511,6 @@ class PhoebeBackend(BaseBackendByTime):
                                                           time, info,
                                                           dataset=mesh_dataset,
                                                           component=info['component']))
-
 
             else:
                 raise NotImplementedError("kind {} not yet supported by this backend".format(kind))

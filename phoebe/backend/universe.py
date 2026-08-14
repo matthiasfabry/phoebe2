@@ -1435,8 +1435,6 @@ class Disk(Body):
                 # note: can't use set() because the order is arbitrary
                 query_cols += [column for column in ldatm_model.basic_axis_names if column not in query_cols]
 
-            for column in query_cols:
-                print(f'{column}: {getattr(self.mesh, column).for_computations.shape}')
             query_pts = np.stack((
                 [getattr(self.mesh, column).for_computations for column in query_cols]
             )).T
@@ -1444,7 +1442,6 @@ class Disk(Body):
             # TODO: change this once mus are stored as a column in the mesh
             # if hasattr(atm_model, 'mus') or hasattr(ldatm_model, 'mus'):
             query_cols += ['mus']
-            print(f'compute_at_vertices={self.mesh._compute_at_vertices}')
             query_pts = np.c_[query_pts, np.abs(self.mesh.mus_for_computations)]
 
             if extinct != 0.0 and not ignore_effects:
